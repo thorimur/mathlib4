@@ -1,7 +1,5 @@
 import Mathlib.CategoryTheory.Category.Cat
 
-open CategoryTheory.Category
-
 namespace CategoryTheory
 
 /-- A universe-polymorphic version of the `yoneda` specialized to `Cat`. -/
@@ -54,7 +52,7 @@ theorem Quiver.Hom.id_down {a : ULiftCat X} : (𝟙 a).down = 𝟙 (ULiftCat.dow
 
 -- !! Should these go the other way? If we drag it to the outside, it helps simp what's inside.
 -- But sometimes the opposite is helpful.
-@[simp↓]
+@[simp]
 theorem Quiver.Hom.up_congr {a b c : X} (f : a ⟶ b) (g : b ⟶ c) : f.up ≫ g.up = (f ≫ g).up := rfl
 
 -- @[simp]
@@ -77,7 +75,7 @@ def ULiftCat.upFunctor : X ⥤ ULiftCat.{v'₁, u'₁} X where
 `X`. -/
 def ULiftCat.downFunctor : ULiftCat.{v'₁, u'₁} X ⥤ X where
   obj := ULiftCat.down
-  map f := f.down
+  map := .down
 
 /-- The type equivalence between the objects of `X` and the objects of `ULiftCat X`. -/
 def ULiftCat.equiv : X ≃ ULiftCat.{v'₁, u'₁} X where
@@ -101,39 +99,23 @@ def ULiftCat.equiv : X ≃ ULiftCat.{v'₁, u'₁} X where
 
 -- Need to try all this with ULiftHom ∘ ULift instead
 
-@[simps]
-def Functor.up (F : X ⥤ Y) : ULiftCat.{v'₁, u'₁} X ⥤ ULiftCat.{v'₂, u'₂} Y where
-  -- Using `ULiftCat.up` instead of `ULift.up` preserves the hom universe level in the term
-  obj x := ULiftCat.up <| F.obj <| ULiftCat.down x
-  map := fun ⟨f⟩ ↦ (F.map <| f).up
+-- Is this kind of silly? Would be nicer to have tooling to construct these on the fly.
+def Functor.up (F : X ⥤ Y) : ULiftCat.{v'₁, u'₁} X ⥤ ULiftCat.{v'₂, u'₂} Y :=
+  ULiftCat.downFunctor ⋙ F ⋙ ULiftCat.upFunctor
 
-@[simps]
-def Functor.upRight (F : X ⥤ Y) : X ⥤ ULiftCat.{v'₂, u'₂} Y where
-  -- Using `ULiftCat.up` instead of `ULift.up` preserves the hom universe level in the term
-  obj x := ULiftCat.up <| F.obj x
-  map f := (F.map f).up
+def Functor.down (F : ULiftCat.{v'₁, u'₁} X ⥤ ULiftCat.{v'₂, u'₂} Y) : X ⥤ Y :=
+  ULiftCat.upFunctor ⋙ F ⋙ ULiftCat.downFunctor
 
--- @[simp]
--- theorem Functor.upRightObj_down_eq (F : X ⥤ Y) (x : X) : (F.upRight.obj x).down = F.obj x := rfl
+def Functor.upRight (F : X ⥤ Y) : X ⥤ ULiftCat.{v'₂, u'₂} Y :=
+  F ⋙ ULiftCat.upFunctor
 
-@[simps]
-def Functor.upRightFunctor : (X ⥤ Y) ⥤ X ⥤ ULiftCat.{v'₂, u'₂} Y where
-  obj := Functor.upRight
-  map f := {
-    app X := (f.app X).up
-  }
+def Functor.upRightFunctor : (X ⥤ Y) ⥤ X ⥤ ULiftCat.{v'₂, u'₂} Y :=
+  whiskeringRight _ _ _ |>.obj ULiftCat.upFunctor
 
-@[simps]
-def Functor.downRight (F : X ⥤ ULiftCat.{v'₂, u'₂} Y) : X ⥤ Y where
-  obj x := ULiftCat.down <| F.obj x
-  map f := (F.map f).down
+def Functor.downRight (F : X ⥤ ULiftCat.{v'₂, u'₂} Y) : X ⥤ Y := F ⋙ ULiftCat.downFunctor
 
-@[simps]
-def Functor.downRightFunctor : (X ⥤ ULiftCat.{v'₂, u'₂} Y) ⥤ X ⥤ Y where
-  obj := Functor.downRight
-  map f := {
-    app X := (f.app X).down
-  }
+def Functor.downRightFunctor : (X ⥤ ULiftCat.{v'₂, u'₂} Y) ⥤ X ⥤ Y :=
+  whiskeringRight _ _ _ |>.obj ULiftCat.downFunctor
 
 -- *Far* too easy to use `ULiftCat.down` when you mean `Quiver.Hom.down`. The fact that everything is ULift.down makes me think: maybe ULiftHom <| ULift is a better design.
 -- Make another file testing this without ULiftCat...
@@ -145,8 +127,6 @@ def Functor.downRightFunctor : (X ⥤ ULiftCat.{v'₂, u'₂} Y) ⥤ X ⥤ Y whe
 def Functor.upRightEquiv : X ⥤ Y ≃ X ⥤ ULiftCat.{v'₂, u'₂} Y where
   toFun := Functor.upRight
   invFun := Functor.downRight
-  left_inv _ := rfl
-  right_inv _ := rfl
 
 /-- The strict equivalence between `ULiftCat (X ⥤ Y)` and `X ⥤ ULiftCat Y` internal to `Cat`. -/
 def Functor.upRightIso :
@@ -154,26 +134,14 @@ def Functor.upRightIso :
   hom := ULiftCat.downFunctor ⋙ Functor.upRightFunctor
   inv := Functor.downRightFunctor ⋙ ULiftCat.upFunctor
 
-@[simps]
-def Functor.upLeft (F : X ⥤ Y) :
-    ULiftCat.{v'₁, u'₁} X ⥤ Y where
-  obj := fun ⟨x⟩ ↦ F.obj x
-  map := fun ⟨f⟩ ↦ F.map f
+def Functor.upLeft (F : X ⥤ Y) : ULiftCat.{v'₁, u'₁} X ⥤ Y :=
+  ULiftCat.downFunctor ⋙ F
 
-@[simps]
-def Functor.downLeft (F : ULiftCat.{v'₁, u'₁} X ⥤ Y) : X ⥤ Y where
-  obj x := F.obj <| ULiftCat.up x
-  map f := F.map f.up
-  map_comp f g := by simp [← Quiver.Hom.up_congr] -- ugh
+def Functor.downLeft (F : ULiftCat.{v'₁, u'₁} X ⥤ Y) : X ⥤ Y :=
+  ULiftCat.upFunctor ⋙ F
 
-@[simps]
-def Functor.downLeftFunctor : (ULiftCat.{v'₁, u'₁} X ⥤ Y) ⥤ X ⥤ Y where
-  obj := Functor.downLeft
-  map f := {
-    app X := (f.app <| ULiftCat.up X)
-  }
-
--- etc., upLeftIso, then upIso
+def Functor.downLeftFunctor : (ULiftCat.{v'₁, u'₁} X ⥤ Y) ⥤ X ⥤ Y :=
+  whiskeringLeft _ _ _ |>.obj ULiftCat.upFunctor
 
 end Functors
 
