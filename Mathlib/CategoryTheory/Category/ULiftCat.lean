@@ -81,21 +81,6 @@ def ULiftCat.downFunctor : ULiftCat.{v'₁, u'₁} X ⥤ X where
 def ULiftCat.equiv : X ≃ ULiftCat.{v'₁, u'₁} X where
   toFun := ULiftCat.up
   invFun := ULiftCat.down
-  left_inv _ := rfl
-  right_inv _ := rfl
-
-
-
--- axiom F.{v,u} {α : Type u} (a : α) : Type v
-
--- def F.foo.{v',v,u} {A : Type u} {a : A} (f : F.{v} a) : F.{v'} a := sorry
-
--- universe v v'
--- variable (f : F.{v} true)
--- -- set_option pp.universes true
--- #check show F.{v'} true from f.foo
-
-
 
 -- Need to try all this with ULiftHom ∘ ULift instead
 
@@ -112,7 +97,8 @@ def Functor.upRight (F : X ⥤ Y) : X ⥤ ULiftCat.{v'₂, u'₂} Y :=
 def Functor.upRightFunctor : (X ⥤ Y) ⥤ X ⥤ ULiftCat.{v'₂, u'₂} Y :=
   whiskeringRight _ _ _ |>.obj ULiftCat.upFunctor
 
-def Functor.downRight (F : X ⥤ ULiftCat.{v'₂, u'₂} Y) : X ⥤ Y := F ⋙ ULiftCat.downFunctor
+def Functor.downRight (F : X ⥤ ULiftCat.{v'₂, u'₂} Y) : X ⥤ Y :=
+  F ⋙ ULiftCat.downFunctor
 
 def Functor.downRightFunctor : (X ⥤ ULiftCat.{v'₂, u'₂} Y) ⥤ X ⥤ Y :=
   whiskeringRight _ _ _ |>.obj ULiftCat.downFunctor
