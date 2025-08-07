@@ -27,7 +27,7 @@ section One
 variable [One M] [One N] [One P]
 
 /-- `mulSupport` of a function is the set of points `x` such that `f x ≠ 1`. -/
-@[to_additive "`support` of a function is the set of points `x` such that `f x ≠ 0`."]
+@[to_additive /-- `support` of a function is the set of points `x` such that `f x ≠ 0`. -/]
 def mulSupport (f : α → M) : Set α := {x | f x ≠ 1}
 
 @[to_additive]
