@@ -124,8 +124,8 @@ variable [Encodable β]
 
 /-- You can compute a product over an encodable type by multiplying over the natural numbers and
 taking a supremum. -/
-@[to_additive /-- You can compute a sum over an encodable type by summing over the natural numbers and
-  taking a supremum. This is useful for outer measures. -/]
+@[to_additive /-- You can compute a sum over an encodable type by summing over the natural numbers
+and taking a supremum. This is useful for outer measures. -/]
 theorem tprod_iSup_decode₂ [CompleteLattice α] (m : α → M) (m0 : m ⊥ = 1) (s : β → α) :
     ∏' i : ℕ, m (⨆ b ∈ decode₂ β i, s b) = ∏' b : β, m (s b) := by
   rw [← tprod_extend_one (@encode_injective β _)]
