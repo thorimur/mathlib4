@@ -20,6 +20,7 @@ import Batteries.Tactic.Lint -- useful to lint this file and for DiscrTree.eleme
 import Batteries.Tactic.Trans
 import Mathlib.Tactic.Eqns -- just to copy the attribute
 import Mathlib.Tactic.Simps.Basic
+import Mathlib.Util.Edit.Extension
 
 /-!
 # The `@[to_additive]` attribute.
@@ -101,7 +102,7 @@ syntax toAdditiveOption := "(" toAdditiveAttrOption <|> toAdditiveReorderOption 
 syntax toAdditiveNameHint := (ppSpace (&"existing" <|> &"self"))?
 /-- Remaining arguments of `to_additive`. -/
 syntax toAdditiveRest :=
-  toAdditiveNameHint (ppSpace toAdditiveOption)* (ppSpace ident)? (ppSpace str)?
+  toAdditiveNameHint (ppSpace toAdditiveOption)* (ppSpace ident)? (ppSpace (str <|> docComment))?
 
 /-- The attribute `to_additive` can be used to automatically transport theorems
 and definitions (but not inductive types and structures) from a multiplicative
@@ -128,7 +129,7 @@ has a doc string, a doc string for the additive version should be passed explici
 
 ```
 /-- Multiplication is commutative -/
-@[to_additive "Addition is commutative"]
+@[to_additive /-- Addition is commutative -/]
 theorem mul_comm' {α} [CommSemigroup α] (x y : α) : x * y = y * x := CommSemigroup.mul_comm
 ```
 
@@ -1238,10 +1239,23 @@ def elabToAdditive : Syntax → CoreM Config
         as there is only one declaration for the attributes.\n\
         Instead, you can write the attributes in the usual way."
     trace[to_additive_detail] "attributes: {attrs}; reorder arguments: {reorder}"
+    let doc ← if let some doc := doc then
+        match doc with
+        | `(str|$doc:str) =>
+          if let some range := doc.raw.getRange? true then
+            modifyEnv fun env => editExt.addEntry env {
+              range
+              replacement := "/-- " ++ doc.getString.trim ++ " -/"
+            }
+          pure (some doc.getString)
+        | `(docComment|$doc:docComment) => pure <| some (← getDocStringText doc).removeLeadingSpaces
+        | _ => pure none
+      else
+        pure none
     return {
       trace := trace.isSome
       tgt := match tgt with | some tgt => tgt.getId | none => Name.anonymous
-      doc := doc.bind (·.raw.isStrLit?)
+      doc
       allowAutoName := false
       attrs, reorder, existing, self
       ref := (tgt.map (·.raw)).getD tk }
