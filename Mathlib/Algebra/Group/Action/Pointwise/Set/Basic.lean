@@ -176,7 +176,7 @@ protected noncomputable def mulAction [Monoid α] [MulAction α β] : MulAction 
 
 /-- A multiplicative action of a monoid on a type `β` gives a multiplicative action on `Set β`. -/
 @[to_additive
-      /-- An additive action of an additive monoid on a type `β` gives an additive action on `Set β`. -/]
+/-- An additive action of an additive monoid on a type `β` gives an additive action on `Set β`. -/]
 protected def mulActionSet [Monoid α] [MulAction α β] : MulAction α (Set β) where
   mul_smul _ _ _ := by simp only [← image_smul, image_image, ← mul_smul]
   one_smul _ := by simp only [← image_smul, one_smul, image_id']

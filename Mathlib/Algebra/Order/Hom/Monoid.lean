@@ -130,8 +130,8 @@ def OrderMonoidHomClass.toOrderMonoidHom [OrderHomClass F α β] [MonoidHomClass
 
 /-- Any type satisfying `OrderMonoidHomClass` can be cast into `OrderMonoidHom` via
   `OrderMonoidHomClass.toOrderMonoidHom`. -/
-@[to_additive /-- Any type satisfying `OrderAddMonoidHomClass` can be cast into `OrderAddMonoidHom` via
-  `OrderAddMonoidHomClass.toOrderAddMonoidHom` -/]
+@[to_additive /-- Any type satisfying `OrderAddMonoidHomClass` can be cast into `OrderAddMonoidHom`
+  via `OrderAddMonoidHomClass.toOrderAddMonoidHom`. -/]
 instance [OrderHomClass F α β] [MonoidHomClass F α β] : CoeTC F (α →*o β) :=
   ⟨OrderMonoidHomClass.toOrderMonoidHom⟩
 
@@ -166,8 +166,8 @@ def OrderMonoidIsoClass.toOrderMonoidIso [EquivLike F α β] [OrderIsoClass F α
 
 /-- Any type satisfying `OrderMonoidIsoClass` can be cast into `OrderMonoidIso` via
   `OrderMonoidIsoClass.toOrderMonoidIso`. -/
-@[to_additive /-- Any type satisfying `OrderAddMonoidIsoClass` can be cast into `OrderAddMonoidIso` via
-  `OrderAddMonoidIsoClass.toOrderAddMonoidIso` -/]
+@[to_additive /-- Any type satisfying `OrderAddMonoidIsoClass` can be cast into `OrderAddMonoidIso`
+  via `OrderAddMonoidIsoClass.toOrderAddMonoidIso`. -/]
 instance [EquivLike F α β] [OrderIsoClass F α β] [MulEquivClass F α β] : CoeTC F (α ≃*o β) :=
   ⟨OrderMonoidIsoClass.toOrderMonoidIso⟩
 
@@ -302,8 +302,8 @@ theorem toOrderHom_injective : Injective (toOrderHom : _ → α →o β) := fun 
 
 /-- Copy of an `OrderMonoidHom` with a new `toFun` equal to the old one. Useful to fix
 definitional equalities. -/
-@[to_additive /-- Copy of an `OrderAddMonoidHom` with a new `toFun` equal to the old one. Useful to fix
-definitional equalities. -/]
+@[to_additive /-- Copy of an `OrderAddMonoidHom` with a new `toFun` equal to the old one. Useful to
+fix definitional equalities. -/]
 protected def copy (f : α →*o β) (f' : α → β) (h : f' = f) : α →*o β :=
   { f.toMonoidHom.copy f' h with toFun := f', monotone' := h.symm.subst f.monotone' }
 
@@ -409,8 +409,8 @@ variable [CommMonoid α] [PartialOrder α]
 
 /-- For two ordered monoid morphisms `f` and `g`, their product is the ordered monoid morphism
 sending `a` to `f a * g a`. -/
-@[to_additive /-- For two ordered additive monoid morphisms `f` and `g`, their product is the ordered
-additive monoid morphism sending `a` to `f a + g a`. -/]
+@[to_additive /-- For two ordered additive monoid morphisms `f` and `g`, their product is the
+ordered additive monoid morphism sending `a` to `f a + g a`. -/]
 instance [IsOrderedMonoid β] : Mul (α →*o β) :=
   ⟨fun f g => { (f * g : α →* β) with monotone' := f.monotone'.mul' g.monotone' }⟩
 
@@ -506,7 +506,8 @@ theorem coe_mk (f : α ≃* β) (h) : (OrderMonoidIso.mk f h : α → β) = f :=
 theorem mk_coe (f : α ≃*o β) (h) : OrderMonoidIso.mk (f : α ≃* β) h = f := rfl
 
 /-- Reinterpret an ordered monoid isomorphism as an order isomorphism. -/
-@[to_additive /-- Reinterpret an ordered additive monoid isomomorphism as an order isomomorphism. -/]
+@[to_additive
+/-- Reinterpret an ordered additive monoid isomomorphism as an order isomomorphism. -/]
 def toOrderIso (f : α ≃*o β) : α ≃o β :=
   { f with
     map_rel_iff' := map_le_map_iff f }
@@ -640,12 +641,14 @@ theorem symm_bijective : Function.Bijective (symm : (α ≃*o β) → β ≃*o �
 theorem refl_symm : (OrderMonoidIso.refl α).symm = .refl α := rfl
 
 /-- `e.symm` is a right inverse of `e`, written as `e (e.symm y) = y`. -/
-@[to_additive (attr := simp) /-- `e.symm` is a right inverse of `e`, written as `e (e.symm y) = y`. -/]
+@[to_additive (attr := simp)
+/-- `e.symm` is a right inverse of `e`, written as `e (e.symm y) = y`. -/]
 theorem apply_symm_apply (e : α ≃*o β) (y : β) : e (e.symm y) = y :=
   e.toEquiv.apply_symm_apply y
 
 /-- `e.symm` is a left inverse of `e`, written as `e.symm (e y) = y`. -/
-@[to_additive (attr := simp) /-- `e.symm` is a left inverse of `e`, written as `e.symm (e y) = y`. -/]
+@[to_additive (attr := simp)
+/-- `e.symm` is a left inverse of `e`, written as `e.symm (e y) = y`. -/]
 theorem symm_apply_apply (e : α ≃*o β) (x : α) : e.symm (e x) = x :=
   e.toEquiv.symm_apply_apply x
 

@@ -364,8 +364,9 @@ theorem Multipliable.tprod_vanishing (hf : Multipliable f) ⦃e : Set G⦄ (he :
 /-- The product over the complement of a finset tends to `1` when the finset grows to cover the
 whole space. This does not need a multipliability assumption, as otherwise all such products are
 one. -/
-@[to_additive /-- The sum over the complement of a finset tends to `0` when the finset grows to cover
-the whole space. This does not need a summability assumption, as otherwise all such sums are zero. -/]
+@[to_additive /-- The sum over the complement of a finset tends to `0` when the finset grows to
+cover the whole space. This does not need a summability assumption, as otherwise all such sums are
+zero. -/]
 theorem tendsto_tprod_compl_atTop_one (f : α → G) :
     Tendsto (fun s : Finset α ↦ ∏' a : { x // x ∉ s }, f a) atTop (𝓝 1) := by
   classical

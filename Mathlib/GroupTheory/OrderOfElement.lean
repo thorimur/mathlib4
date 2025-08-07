@@ -212,7 +212,7 @@ theorem orderOf_eq_iff {n} (h : 0 < n) :
 
 /-- A group element has finite order iff its order is positive. -/
 @[to_additive
-      /-- A group element has finite additive order iff its order is positive. -/]
+  /-- A group element has finite additive order iff its order is positive. -/]
 theorem orderOf_pos_iff : 0 < orderOf x ↔ IsOfFinOrder x := by
   rw [iff_not_comm.mp orderOf_eq_zero_iff, pos_iff_ne_zero]
 
@@ -795,8 +795,8 @@ theorem mem_powers_iff_mem_range_orderOf [DecidableEq G] :
 /-- The equivalence between `Submonoid.powers` of two elements `x, y` of the same order, mapping
   `x ^ i` to `y ^ i`. -/
 @[to_additive
-  /-- The equivalence between `Submonoid.multiples` of two elements `a, b` of the same additive order,
-  mapping `i • a` to `i • b`. -/]
+  /-- The equivalence between `Submonoid.multiples` of two elements `a, b` of the same additive
+  order, mapping `i • a` to `i • b`. -/]
 noncomputable def powersEquivPowers (h : orderOf x = orderOf y) : powers x ≃ powers y :=
   (finEquivPowers <| isOfFinOrder_of_finite _).symm.trans <|
     (finCongr h).trans <| finEquivPowers <| isOfFinOrder_of_finite _
@@ -878,8 +878,8 @@ lemma mem_zpowers_iff_mem_range_orderOf [DecidableEq G] :
 /-- The equivalence between `Subgroup.zpowers` of two elements `x, y` of the same order, mapping
   `x ^ i` to `y ^ i`. -/
 @[to_additive
-  /-- The equivalence between `Subgroup.zmultiples` of two elements `a, b` of the same additive order,
-  mapping `i • a` to `i • b`. -/]
+  /-- The equivalence between `Subgroup.zmultiples` of two elements `a, b` of the same additive o
+  order, mapping `i • a` to `i • b`. -/]
 noncomputable def zpowersEquivZPowers (h : orderOf x = orderOf y) :
     Subgroup.zpowers x ≃ Subgroup.zpowers y :=
   (finEquivZPowers <| isOfFinOrder_of_finite _).symm.trans <| (finCongr h).trans <|
@@ -1052,7 +1052,8 @@ end FiniteGroup
 section PowIsSubgroup
 
 /-- A nonempty idempotent subset of a finite cancellative monoid is a submonoid -/
-@[to_additive /-- A nonempty idempotent subset of a finite cancellative add monoid is a submonoid -/]
+@[to_additive
+/-- A nonempty idempotent subset of a finite cancellative add monoid is a submonoid -/]
 def submonoidOfIdempotent {M : Type*} [LeftCancelMonoid M] [Finite M] (S : Set M)
     (hS1 : S.Nonempty) (hS2 : S * S = S) : Submonoid M :=
   have pow_mem (a : M) (ha : a ∈ S) (n : ℕ) : a ^ (n + 1) ∈ S := by
