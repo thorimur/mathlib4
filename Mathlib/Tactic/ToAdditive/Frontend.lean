@@ -20,7 +20,6 @@ import Batteries.Tactic.Lint -- useful to lint this file and for DiscrTree.eleme
 import Batteries.Tactic.Trans
 import Mathlib.Tactic.Eqns -- just to copy the attribute
 import Mathlib.Tactic.Simps.Basic
-import Mathlib.Util.Edit.Extension
 
 /-!
 # The `@[to_additive]` attribute.
@@ -1239,19 +1238,13 @@ def elabToAdditive : Syntax → CoreM Config
         as there is only one declaration for the attributes.\n\
         Instead, you can write the attributes in the usual way."
     trace[to_additive_detail] "attributes: {attrs}; reorder arguments: {reorder}"
-    let doc ← if let some doc := doc then
-        match doc with
-        | `(str|$doc:str) =>
-          if let some range := doc.raw.getRange? true then
-            modifyEnv fun env => editExt.addEntry env {
-              range
-              replacement := "/-- " ++ doc.getString.trim ++ " -/"
-            }
-          pure (some doc.getString)
-        | `(docComment|$doc:docComment) => pure <| some (← getDocStringText doc).removeLeadingSpaces
-        | _ => pure none
-      else
-        pure none
+    let doc ← doc.mapM fun
+      | `(str|$doc:str) => pure doc.getString
+      | `(docComment|$doc:docComment) => do
+        -- TODO: rely on `addDocString`s call to `validateDocComment` after deprecating `str` here
+        validateDocComment doc
+        return (← getDocStringText doc).removeLeadingSpaces
+      | _ => throwUnsupportedSyntax
     return {
       trace := trace.isSome
       tgt := match tgt with | some tgt => tgt.getId | none => Name.anonymous
