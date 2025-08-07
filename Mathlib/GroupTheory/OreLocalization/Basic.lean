@@ -171,7 +171,7 @@ theorem liftExpand_of {C : Sort*} {P : X → S → C}
 
 /-- A version of `liftExpand` used to simultaneously lift functions with two arguments
 in `X[S⁻¹]`. -/
-@[to_additive?
+@[to_additive
 /-- A version of `liftExpand` used to simultaneously lift functions with two arguments. -/]
 def lift₂Expand {C : Sort*} (P : X → S → X → S → C)
     (hP :

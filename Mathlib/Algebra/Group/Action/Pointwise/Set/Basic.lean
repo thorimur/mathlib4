@@ -321,7 +321,8 @@ This is useful to show that the intersection of approximate subgroups is an appr
 /-- Any intersection of translates of two sets `s` and `t` can be covered by a single translate of
 `(-s + s) ∩ (-t + t)`.
 
-This is useful to show that the intersection of approximate subgroups is an approximate subgroup. -/]
+This is useful to show that the intersection of approximate subgroups is an approximate subgroup.
+-/]
 lemma exists_smul_inter_smul_subset_smul_inv_mul_inter_inv_mul (s t : Set α) (a b : α) :
     ∃ z : α, a • s ∩ b • t ⊆ z • ((s⁻¹ * s) ∩ (t⁻¹ * t)) := by
   obtain hAB | ⟨z, hzA, hzB⟩ := (a • s ∩ b • t).eq_empty_or_nonempty

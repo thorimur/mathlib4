@@ -154,7 +154,8 @@ variable [Countable β]
 
 /-- If a function is countably sub-multiplicative then it is sub-multiplicative on countable
 types -/
-@[to_additive /-- If a function is countably sub-additive then it is sub-additive on countable types -/]
+@[to_additive
+/-- If a function is countably sub-additive then it is sub-additive on countable types -/]
 theorem rel_iSup_tprod [CompleteLattice α] (m : α → M) (m0 : m ⊥ = 1) (R : M → M → Prop)
     (m_iSup : ∀ s : ℕ → α, R (m (⨆ i, s i)) (∏' i, m (s i))) (s : β → α) :
     R (m (⨆ b : β, s b)) (∏' b : β, m (s b)) := by
