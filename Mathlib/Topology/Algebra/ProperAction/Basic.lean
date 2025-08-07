@@ -148,9 +148,9 @@ alias t2Space_of_properSMul_of_t2Group := t2Space_of_properSMul_of_t1Group
 /-- If two groups `H` and `G` act on a topological space `X` such that `G` acts properly and
 there exists a group homomorphims `H → G` which is a closed embedding compatible with the actions,
 then `H` also acts properly on `X`. -/
-@[to_additive /-- If two groups `H` and `G` act on a topological space `X` such that `G` acts properly
-and there exists a group homomorphims `H → G` which is a closed embedding compatible with the
-actions, then `H` also acts properly on `X`. -/]
+@[to_additive /-- If two groups `H` and `G` act on a topological space `X` such that `G` acts
+properly and there exists a group homomorphims `H → G` which is a closed embedding compatible with
+the actions, then `H` also acts properly on `X`. -/]
 theorem properSMul_of_isClosedEmbedding {H : Type*} [Group H] [MulAction H X] [TopologicalSpace H]
     [ProperSMul G X] (f : H →* G) (f_clemb : IsClosedEmbedding f)
     (f_compat : ∀ (h : H) (x : X), f h • x = h • x) : ProperSMul H X where
@@ -161,7 +161,8 @@ theorem properSMul_of_isClosedEmbedding {H : Type*} [Group H] [MulAction H X] [T
     rw [this]
     exact h.comp <| ProperSMul.isProperMap_smul_pair
 
-/-- If `H` is a closed subgroup of `G` and `G` acts properly on X then so does `H`. -/
-@[to_additive /-- If `H` is a closed subgroup of `G` and `G` acts properly on X then so does `H`. -/]
+/-- If `H` is a closed subgroup of `G` and `G` acts properly on `X`, then so does `H`. -/
+@[to_additive
+/-- If `H` is a closed subgroup of `G` and `G` acts properly on `X`, then so does `H`. -/]
 instance {H : Subgroup G} [ProperSMul G X] [H_closed : IsClosed (H : Set G)] : ProperSMul H X :=
   properSMul_of_isClosedEmbedding H.subtype H_closed.isClosedEmbedding_subtypeVal fun _ _ ↦ rfl

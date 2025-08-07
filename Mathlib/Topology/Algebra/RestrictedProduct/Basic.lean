@@ -307,8 +307,8 @@ variable {B : Π i, S i}
 /-- `RestrictedProduct.evalMonoidHom j` is the monoid homomorphism from the restricted
 product `Πʳ i, [R i, B i]_[𝓕]` to the component `R j`.
 -/
-@[to_additive /-- `RestrictedProduct.evalAddMonoidHom j` is the monoid homomorphism from the restricted
-product `Πʳ i, [R i, B i]_[𝓕]` to the component `R j`. -/]
+@[to_additive /-- `RestrictedProduct.evalAddMonoidHom j` is the monoid homomorphism from the
+restricted product `Πʳ i, [R i, B i]_[𝓕]` to the component `R j`. -/]
 def evalMonoidHom (j : ι) [Π i, Monoid (R i)] [∀ i, SubmonoidClass (S i) (R i)] :
     (Πʳ i, [R i, B i]_[𝓕]) →* R j where
   toFun x := x j
