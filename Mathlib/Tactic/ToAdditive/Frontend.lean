@@ -21,6 +21,7 @@ import Batteries.Tactic.Trans
 import Mathlib.Tactic.Eqns -- just to copy the attribute
 import Mathlib.Tactic.Simps.Basic
 import Lean.Meta.Tactic.TryThis
+import Mathlib.Util.Edit.Utilities
 
 /-!
 # The `@[to_additive]` attribute.
@@ -1258,6 +1259,10 @@ def elabToAdditive : Syntax → CoreM Config
         return doc.getString
       | `(docComment|$doc:docComment) => do
         -- TODO: rely on `addDocString`s call to `validateDocComment` after removing `str` support
+        if let some range := doc.raw.getRange? then
+          let map ← getFileMap
+          if let some edits := map.dedents? range (some 0) then
+            modifyEnv fun env => editExt.addEntry env edits.toList
         validateDocComment doc
         /- Note: the following replicates the behavior of `addDocString`. However, this means that
         trailing whitespace might appear in docstrings added via `docComment` syntax when compared
