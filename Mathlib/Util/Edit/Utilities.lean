@@ -135,14 +135,27 @@ def String.dedents? (s : String) (indent : Nat := 0)
     i := j₁
   if edits.isEmpty then none else return edits
 
-/-- Produces a sorted nonempty array of edits. -/
-def Lean.FileMap.dedents? (map : FileMap) (r : String.Range) (customIndent? : Option Nat := none) :
-    Option (Array Edit) := do
+def Lean.FileMap.dedents? (map : FileMap) (r : String.Range) (customIndent? : Option Nat := none)
+    (dedentFirstLine := false) : Option (Array Edit) := do
   let indent := customIndent?.getD <|
-    let lineStart := map.lineStart (map.toPosition r.start).line
-    let (indent, endPos) := map.source.match (· = ' ') (startPos := lineStart) (stopPos := r.start)
+    let (_, indent, endPos) := getFirstLineIndent map r
     if endPos = r.start then indent else 0
-  map.source.dedents? indent r.start r.stop
+  let firstDedent? := if dedentFirstLine then
+      let (lineStart, actualIndent, endPos) := getFirstLineIndent map r
+      let indent := customIndent?.getD 0
+      if indent < actualIndent then
+        some (Edit.delete { start := lineStart + ⟨indent⟩, stop := endPos })
+      else
+        none
+    else none
+  match firstDedent?, map.source.dedents? indent r.start r.stop with
+  | none, a => a
+  | some edit, some edits => some (edits.push edit) -- will be sorted by the extension
+  | some edit, none => some #[edit]
+where
+  getFirstLineIndent (map : FileMap) (r : String.Range) : String.Pos × Nat × String.Pos :=
+    let lineStart := map.lineStart (map.toPosition r.start).line
+    (lineStart, map.source.match (· = ' ') (startPos := lineStart) (stopPos := r.start))
 
 def Lean.FileMap.getLineContents (map : FileMap) (line : Nat) (lastLine := line) : String :=
   map.source.extract (map.lineStart line) (map.lineStart (lastLine + 1))

@@ -1261,7 +1261,12 @@ def elabToAdditive : Syntax → CoreM Config
         -- TODO: rely on `addDocString`s call to `validateDocComment` after removing `str` support
         if let some range := doc.raw.getRange? then
           let map ← getFileMap
-          if let some edits := map.dedents? range (some 0) then
+          -- let (firstLine, lastLine) := map.getLines range
+          if let some edits := map.dedents? range (some 0) true then
+            -- logInfo m!"source:\n{map.source.extract range.1 range.2}\n\
+            --   edits := {edits}\n
+            --   \"{map.source.applyEdits (edits.qsort fun e₁ e₂ => e₁.cmp e₂ |>.isLT)
+            --     |>.toFileMap.getLineContents firstLine lastLine}\""
             modifyEnv fun env => editExt.addEntry env edits.toList
         validateDocComment doc
         /- Note: the following replicates the behavior of `addDocString`. However, this means that
