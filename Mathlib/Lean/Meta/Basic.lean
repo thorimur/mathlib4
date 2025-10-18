@@ -94,3 +94,35 @@ def Lean.Meta.withEnsuringLocalInstance {α : Type} (inst : MVarId) (k : MetaM (
       let (e, v) ← k
       let e' := (← e.abstractM #[inst']).instantiate1 instE
       return (e', v)
+
+private partial def Lean.Syntax.TSepArray.mapMAux {k k'} {m} [Monad m]
+    (a : Array Syntax) (sep' : Syntax) (f : TSyntax k → m (TSyntax k'))
+    (i : Nat) (acc : Array Syntax) :
+    m (Array Syntax) := do
+  if h : i < a.size then
+    let stx := a[i]
+    if i % 2 == 0 then do
+      let stx ← f ⟨stx⟩
+      mapMAux a sep' f (i+1) (acc.push stx)
+    else
+      mapMAux a sep' f (i+1) (acc.push sep')
+  else
+    pure acc
+
+/-- Maps a function `f : TSyntax k → m (TSyntax k')` on the elements of `TSepArray k s`, changing
+`s` to the new separator `sep`.
+
+If this will be immediately turned back into syntax, consider using an antiquotation
+`` `(k'| $a<sep>*) ``. This function should only be used when manipulating the `TSepArray` before
+e.g. pushing an element; otherwise, prefer syntax antiquotations, e.g. `` `(kind| $[foo $a];*)``. -/
+def Lean.Syntax.TSepArray.mapM {k k'} {s} {m} [Monad m]
+    (a : TSepArray k s) (sep : String) (f : TSyntax k → m (TSyntax k')) :
+    m (TSepArray k' sep) :=
+  return ⟨← mapMAux a (if s == sep then mkAtom s else mkAtom sep) f 0 #[]⟩
+
+/-- Append two `TSepArray`s, inserting the separator in between, and handling the cases
+where either is empty correctly. -/
+def Lean.Syntax.TSepArray.append {k} {sep} (a b : TSepArray k sep) : TSepArray k sep :=
+  if a.elemsAndSeps.isEmpty then b else
+  if b.elemsAndSeps.isEmpty then a else
+  ⟨a.elemsAndSeps.push (mkAtom sep) ++ b.elemsAndSeps⟩
