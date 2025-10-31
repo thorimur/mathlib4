@@ -1,14 +1,24 @@
 
 import Lean
+import Qq
+import Batteries
+
+open Qq
+
+-- set_option pp.raw true
 
 /-
 # `Decidable`-to-`classical` Linter
 
 This linter suggests replacing `Decidable*` hypotheses which are unused in the type of a theorem with the use of `classical` in the proof.
 
+
 -/
 
 #check Lean.Elab.Command.State
+/-
+Note: `where` defs do not appear in def view.
+-/
 
 /-
 Possible designs:
@@ -87,7 +97,7 @@ likewise, can always find binder syntax just by traversing syntax tree until we 
 
 For inserting classical: Check what bodyStx is for where and top-level matches
 
-QoL: elaborate suggestion in bad case to see if it works, instead of just suggesting to put classical somewhere and waiting for the user to get hit with an error.
+QoL: elaborate suggestion in bad case to see if it works, instead of just suggesting to put classical somewhere and waiting for the user to get hit with an error. Maybe just `elabMutualDef` but `withoutModfyingEnv`.
 -/
 
 #check Lean.Elab.DefsParsedSnapshot
@@ -98,12 +108,79 @@ QoL: elaborate suggestion in bad case to see if it works, instead of just sugges
 
 #check Lean.Elab.TermInfo
 
-set_option trace.Elab.info true
 
 open Lean Meta Elab Command
 
-def x (d : Nat) := True.intro
+namespace Lean.Expr
 
+def getUnusedForallInstanceBinderIdxsWhere (p : Expr → Bool) (e : Expr) :
+    Array Nat :=
+  go e 0 #[]
+where
+  go (body : Expr) (current : Nat) (acc : Array Nat) : Array Nat :=
+    match body with
+    | .forallE _ type body bi => go body (current+1) <|
+      if bi.isInstImplicit && p type && !(body.hasLooseBVar current) then
+        acc.push current
+      else
+        acc
+    | .mdata _ body => go body current acc
+    | _ => acc
+
+-- This could instead check an environment extension, but unless
+@[inline] partial def isAppOfDecidable (type : Expr) : Bool :=
+    match type.cleanupAnnotations.getAppFn' with
+    | .const n _ =>
+      n == ``DecidableEq   ||
+      n == ``DecidableLE   ||
+      n == ``DecidableLT   ||
+      n == ``DecidableRel  ||
+      n == ``DecidablePred ||
+      n == ``Decidable
+    | .forallE _ _ body _ => isAppOfDecidable body
+    | _ => false
+
+end Lean.Expr
+
+namespace Mathlib.Linter
+
+register_option linter.unusedDecidable : Bool := {
+  defValue := false
+  descr := "enable the unused `Decidable*` instance linter, which lints against `Decidable*` \
+    instances in the hypotheses of theorems which are not used in the type and can therefore be \
+    replaced with a use of `classical` in the proof."
+}
+
+open Linter
+
+def unusedDecidable : Linter where
+  run := withSetOptionIn fun _ => whenLinterOption linter.unusedDecidable do -- TODO: check if option is set
+    -- The `snap` approach ignores `where`/`let rec` subdefinitions
+    let some snap := (← read).snap? | return -- ok?
+    -- should we be trying to reuse `old?`?
+    let some { defs .. } := snap.new.result!.get.val.get? DefsParsedSnapshot | return
+    liftTermElabM do for d in defs do
+      let some { view .. } := d.headerProcessedSnap.get | continue
+      -- todo: be more careful about mdata etc.; check if variables handled correctly
+      unless (← inferType view.type).isProp do continue
+      let unusedDecidableHyps :=
+        view.type.getUnusedForallInstanceBinderIdxsWhere Expr.isAppOfDecidable
+      unless unusedDecidableHyps.isEmpty do
+        -- Will use the binder ref in v2
+        withRef (mkNullNode view.binderIds) do
+          forallBoundedTelescope view.type (some <| unusedDecidableHyps.back! + 1)
+            fun fvars body => do
+              let decidables ← unusedDecidableHyps.mapM fun idx =>
+                return m!"`{← inferType fvars[idx]!}`"
+              logLint linter.unusedDecidable (← getRef) m!"\
+                `{.ofConstName view.declName}` binds \
+                {if decidables.size = 1 then s!"an instance of" else s!"instances"} \
+                of {.andList decidables.toList}\n\n\
+                Consider using `classical` in the proof instead."
+
+initialize addLinter unusedDecidable
+
+end Mathlib.Linter
 #check DefKind.isTheorem
 def n := `decidableToClassical
 
@@ -124,6 +201,16 @@ def Lean.Syntax.isOriginal (stx : Syntax) : Bool := Id.run do
 
 def InfoT (m : Type → Type) := ReaderT
 
+def Placeholder := Unit
+
+def showLCtx (expectedType? : Option Expr) : MetaM MessageData := do
+  let m ← mkFreshExprMVar (expectedType?.getD <| mkConst ``Placeholder) (kind := .syntheticOpaque)
+  return .ofGoal m.mvarId!
+
+nonrec def Lean.Elab.TermInfo.logLCtx (ctx : ContextInfo) (ti : TermInfo) : CommandElabM Unit :=
+  liftTermElabM <| Meta.withLCtx ti.lctx #[] do
+    logInfo m!"{← ti.format ctx}\n{← showLCtx ti.expectedType?}"
+
 #check mkDefView
 deriving instance TypeName for HeaderProcessedSnapshot
 
@@ -135,12 +222,23 @@ def run : Linter where
     let a := snap.new.result!.get.val
       -- | logInfo m!"not a HeaderProcessedSnapshot"
     logInfo m!"{a.typeName}"
+    let some { defs .. } := a.get? DefsParsedSnapshot | logInfo m!"not a defsParsedSnapshot"
+    logInfo m!"# of defs: {defs.size}"
+    for d in defs do
+      let some x := d.headerProcessedSnap.get | logInfo m!"empty def"; continue
+      logInfo m!"def body: {x.bodyStx}\nbinderIds: {x.view.binderIds}"
+
+
+
     -- logInfo m!"The ctx.snap? is some: {(← read).snap?.map}"
     if (← get).snapshotTasks.isEmpty then logInfo "no snaps"
     for task in (← get).snapshotTasks do
       logSnapshotTask task
+
+
     let trees ← getInfoTrees
     for t in trees do
+
       let some as ← t.visitM (postNode := fun ctx i ch as => do
           let as := as.reduceOption.flatten
           match i with
@@ -157,32 +255,35 @@ def run : Linter where
           | _ => return as)
         | logInfo "none found"
       logInfo m!"{as}"
-      let some as ← t.visitM (postNode := fun ctx i ch as => do
-          let as := as.reduceOption.flatten
+
+      t.visitM' (postNode := fun ctx i ch => do
           match i with
-          | .ofTermInfo { stx .. } =>
-            if stx.isOriginal then return f!"{stx}" :: as else return as
-          | _ => return as)
-        | logInfo "none found"
-      logInfo m!"{as}"
+          | .ofCustomInfo { value .. } => do
+            let some _ := value.get? Term.BodyInfo | return
+            match ch[0]? with
+            | some (InfoTree.node (.ofTermInfo ti) _) => ti.logLCtx ctx
+            | _ => return
+          | _ => return )
 
 run_cmd do
   lintersRef.modify fun ls => ls.eraseP (·.name == n)
   addLinter run
 
 
+
 #check mkDefView
 
 set_option trace.Elab.info true
 
-variable (q : String)
+variable (q : String) (h : q = q)
 
 #check ConstantInfo
 
-mutual
 
-def foo {α} [DecidableEq α] (a b : α) : Nat → ∀ x : Unit, a = a
-| n => fun _ => rfl
+-- mutual
+
+def foo {α} [DecidableEq α] (a b : α) : Nat → ∀ x : Unit, q = q ∧ a = a
+| n => fun _ => And.intro rfl rfl
 where
   go (d : False) : True := True.intro
 
@@ -191,6 +292,52 @@ def r := true
 opaque cc : True
 
 end
+
+#check foo
+
+/- We have a couple of choices here:
+
+- Start with a bare expression type, then compute if it has an unused inst via `isArrow`. Makes it difficult to find the fvars and their info, though.
+- Start in the local context of the term under `Lean.Elab.Term.BodyInfo`, though (1) this makes finding dependence awkward; have to use `hasForwardDeps` and `dependsOn` for the goal. (2) also have to introduce things into the goal. Maybe: cheap check, then recompute on error?
+- start in the local context, revert it all. ehhhh. we could probably figure it out *while* reverting one by one, too, though. Could be better? Unfortunately this might mean rewriting `mkForall`...also, do we need to handle mvars?
+
+Maintainability-wise I'd prefer just one check over two that use different approaches.
+
+
+The problem, really, is that the infotree local contexts have the *full* local context, including variables--but the type only winds up having ones that are used, as per `withHeaderSecVars`, which takes into account the scope and elab header. We need the actual fvars so that we can grab the syntax, and then the binder.
+
+We could potentially open private here, but...well, that might be the best, actually. Let's check the
+
+Note: can't look at the local context after reverting to see which variables were *un*used, either, as there might be variables which depend on used variables but were not themselves used.
+
+We need to know which get used by the ultimate declaration.
+
+The plan (unfortunately): do a cheap check on the type to check and extract the indices. Then, run `withSectionFVars` in an info node
+-/
+
+
+
+#check mkForallFVars
+#check MetavarContext.mkForall
+#check LocalContext.mkBinding
+
+#check mkDefView
+
+#check Expr.collectFVars
+
+
+
+
+
+
+
+
+
+/-
+
+
+-/
+
 
 inductive Foo {α} [DecidableEq α] where
 | x
