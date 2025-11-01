@@ -69,7 +69,7 @@ where
   go (body : Expr) (current : Nat) (acc : Array Nat) : Array Nat :=
     match body.cleanupAnnotations with
     | .forallE _ type body bi => go body (current+1) <|
-      if bi.isInstImplicit && p type && !(body.hasLooseBVar current) then
+      if bi.isInstImplicit && p type && !(body.hasLooseBVar 0) then
         acc.push current
       else
         acc
@@ -118,48 +118,43 @@ def unusedDecidable : Linter where
   run := withSetOptionIn fun stx => do
     unless getLinterValue linter.unusedDecidable (← getLinterOptions) do
       return
-    -- The `snap` approach ignores `where`/`let rec` subdefinitions
-    logInfo m!"{(← read).snap?.isSome}"
-    let some snap := (← read).snap? | return
-    -- TODO: should we be trying to reuse `old?`? and is this the best way to get this?
-    let some { defs .. } := snap.new.result!.get.val.get? DefsParsedSnapshot | return
-
-    liftTermElabM do for d in defs do
-      let some { view .. } := d.headerProcessedSnap.get | continue
-      -- TODO: be more careful about mdata etc.; check if variables handled correctly
-      unless (← instantiateMVars <|← inferType view.type).isProp do continue
-      let unusedDecidableHyps :=
-        view.type.getUnusedForallInstanceBinderIdxsWhere isAppOfDecidable
-      unless unusedDecidableHyps.isEmpty do
-        -- Note: the following is allowed to be expensive, since it is only run when we show a
-        -- warning.
-        -- TODO: get the binder syntax, log at the correct location
-        -- TODO: insert `classical` into the body syntax and suggest it, possibly after
-        -- re-elaborating to be sure it works
-
-        let positionRef :=
-          if unusedDecidableHyps.size > view.numParams then
-            -- Decidable hypotheses are after the `:`; fall back to using full header sans
-            -- modifiers/docComment for now
-            d.fullHeaderRef[1]
-          else
-            -- Decidable hypotheses are before the `:`: use the span of the `binderId`s
-            -- Note: generally, `variable`s which are not used in the type should be excluded
-            -- from the type already by ordinary elaboration. TODO: try to think of edge cases.
-            -- Fall back to header ref if `binderIds` are missing.
-            replaceRef (mkNullNode view.binderIds) d.fullHeaderRef[1]
-        withRef positionRef do
-          forallBoundedTelescope view.type (some <| unusedDecidableHyps.back! + 1)
-            (cleanupAnnotations := true) fun fvars body => do
-              let decidables ← unusedDecidableHyps.mapM fun idx =>
-                return m!"`[{← inferType fvars[idx]!}]`"
-              logLint linter.unusedDecidable (← getRef) m!"\
-                `{.ofConstName view.declName}` has the \
-                {if decidables.size = 1 then "hypothesis" else "hypotheses"} \
-                {.andList decidables.toList} which \
-                {if decidables.size = 1 then "is" else "are"} not used in the remainder of the \
-                type.\n\
-                Consider removing these hypotheses and using `classical` in the proof instead."
+    for t in ← getInfoTrees do
+      -- TODO: combine visits, since relevant term infos always come afterwards anyway
+      -- TODO: check if some `Term.State` lets us see let recs to lift? Or jsut find names via def
+      -- view?
+      let some decls ← t.visitM
+        (postNode := fun ctx i ch decls => do
+          let decls := decls.reduceOption.flatten
+          match i with
+          | .ofCustomInfo i =>
+            if i.value.typeName == ``Lean.Elab.Term.BodyInfo then
+              if let some decl := ctx.parentDecl? then
+                let s := ctx.env
+                return decl :: decls
+              else return decls
+            else return decls
+          | _ => return decls)
+        | return
+      let env ← getEnv
+      let vals? := decls.map env.findConstVal?
+      liftTermElabM do for val? in vals? do
+        if let some val := val? then
+          unless (← inferType val.type).isProp do continue
+          let unusedDecidableHyps :=
+            val.type.getUnusedForallInstanceBinderIdxsWhere isAppOfDecidable
+          unless unusedDecidableHyps.isEmpty do
+            -- TODO: get syntax from infotrees for logging ref
+            forallBoundedTelescope val.type (some <| unusedDecidableHyps.back! + 1)
+              (cleanupAnnotations := true) fun fvars body => do
+                let decidables ← unusedDecidableHyps.mapM fun idx =>
+                  return m!"`[{← inferType fvars[idx]!}]`"
+                logLint linter.unusedDecidable (← getRef) m!"\
+                  `{.ofConstName val.name}` has the \
+                  {if decidables.size = 1 then "hypothesis" else "hypotheses"} \
+                  {.andList decidables.toList} which \
+                  {if decidables.size = 1 then "is" else "are"} not used in the remainder of the \
+                  type.\n\
+                  Consider removing these hypotheses and using `classical` in the proof instead."
 
 initialize addLinter unusedDecidable
 
