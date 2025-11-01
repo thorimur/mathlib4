@@ -113,7 +113,7 @@ open Lean Meta Elab Command
 
 namespace Lean.Expr
 
-def getUnusedForallInstanceBinderIdxsWhere (p : Expr → Bool) (e : Expr) :
+private def getUnusedForallInstanceBinderIdxsWhere (p : Expr → Bool) (e : Expr) :
     Array Nat :=
   go e 0 #[]
 where
@@ -154,7 +154,9 @@ register_option linter.unusedDecidable : Bool := {
 open Linter
 
 def unusedDecidable : Linter where
-  run := withSetOptionIn fun _ => whenLinterOption linter.unusedDecidable do -- TODO: check if option is set
+  run := withSetOptionIn fun _ => do
+    unless getLinterValue linter.unusedDecidable (← getLinterOptions) do
+      return
     -- The `snap` approach ignores `where`/`let rec` subdefinitions
     let some snap := (← read).snap? | return -- ok?
     -- should we be trying to reuse `old?`?
@@ -238,6 +240,10 @@ def run : Linter where
 
     let trees ← getInfoTrees
     for t in trees do
+      t.visitM' (postNode := fun ctx i ch => do
+          match i with
+          | .ofTermInfo ti => logInfo m!"{ti.expr} {repr ti.stx}"
+          | _ => return )
 
       let some as ← t.visitM (postNode := fun ctx i ch as => do
           let as := as.reduceOption.flatten
@@ -255,6 +261,7 @@ def run : Linter where
           | _ => return as)
         | logInfo "none found"
       logInfo m!"{as}"
+
 
       t.visitM' (postNode := fun ctx i ch => do
           match i with
@@ -281,6 +288,8 @@ variable (q : String) (h : q = q)
 
 
 -- mutual
+
+
 
 def foo {α} [DecidableEq α] (a b : α) : Nat → ∀ x : Unit, q = q ∧ a = a
 | n => fun _ => And.intro rfl rfl
@@ -316,7 +325,17 @@ The plan (unfortunately): do a cheap check on the type to check and extract the 
 -/
 
 
-
+let some termInfos ← t.visitM
+        (postNode := fun ctx i _ tis => do
+          let tis := tis.reduceOption.flatten
+          match i with
+          | .ofTermInfo i =>
+            match i.expr with
+            | .const decl _ => if decls.contains decl then return (ctx, i) :: tis else return tis
+            | _ => return tis
+          | _ => return tis)
+        | return
+      logInfo m!"{← termInfos.mapM fun (ctx, i) => i.format ctx}"
 #check mkForallFVars
 #check MetavarContext.mkForall
 #check LocalContext.mkBinding
