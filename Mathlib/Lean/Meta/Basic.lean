@@ -109,6 +109,8 @@ private partial def Lean.Syntax.TSepArray.mapMAux {k k'} {m} [Monad m]
   else
     pure acc
 
+
+#check Lean.Syntax.TSepArray.ofElems
 /-- Maps a function `f : TSyntax k → m (TSyntax k')` on the elements of `TSepArray k s`, changing
 `s` to the new separator `sep`.
 
@@ -120,9 +122,22 @@ def Lean.Syntax.TSepArray.mapM {k k'} {s} {m} [Monad m]
     m (TSepArray k' sep) :=
   return ⟨← mapMAux a (if s == sep then mkAtom s else mkAtom sep) f 0 #[]⟩
 
+/-- Appends two arrays, inserting the separator `sep` between them only if both are nonempty. -/
+def Array.appendWithSep {α} (a b : Array α) (sep : α) : Array α :=
+  if a.isEmpty then b else
+  if b.isEmpty then a else
+  a.push sep ++ b
+
+/-- Flattens an array of arrays, inserting the separator `sep` between nonempty arrays. -/
+def Array.flattenWithSep {α} (a : Array (Array α)) (sep : α) : Array α :=
+  a.foldl (init := #[]) fun acc a => acc.appendWithSep a sep
+
 /-- Append two `TSepArray`s, inserting the separator in between, and handling the cases
 where either is empty correctly. -/
 def Lean.Syntax.TSepArray.append {k} {sep} (a b : TSepArray k sep) : TSepArray k sep :=
-  if a.elemsAndSeps.isEmpty then b else
-  if b.elemsAndSeps.isEmpty then a else
-  ⟨a.elemsAndSeps.push (mkAtom sep) ++ b.elemsAndSeps⟩
+  ⟨a.elemsAndSeps.appendWithSep b.elemsAndSeps (mkAtom sep)⟩
+
+/-- Flatten an array of `TSepArray`s, inserting the separator in between, and handling the cases
+where some `TSepArray`s are empty correctly. -/
+def Lean.Syntax.TSepArray.flatten {k} {sep} (as : Array (TSepArray k sep)) : TSepArray k sep :=
+  ⟨as.map elemsAndSeps |>.flattenWithSep (mkAtom sep)⟩
