@@ -108,7 +108,11 @@ elab tk:"#info_trees!" " in" cmd:command : command => do
         let some (l : ListTree) ← t.visitM (postNode := fun ctx i _ch l => do
           let l := l.reduceOption
           match i with
-          | .ofTermInfo i => return ListTree.node m!"{repr i.expr} {← i.toMessageData ctx}" l
+          | .ofTermInfo i => do
+            if i.expr.isConst then
+              return ListTree.node m!"@⟨{i.stx}⟩ {repr i.expr} {← i.toMessageData ctx}" l
+            else
+              return ListTree.node m!"{repr i.expr} {← i.toMessageData ctx}" l
           | .ofCommandInfo i => return ListTree.node m!"{i.elaborator}: {i.stx}" l
           | i => return ListTree.node m!"{← i.format ctx}" l
         )
@@ -144,6 +148,11 @@ theorem bar (i : Nat) (h : i ≠ 0) : FooRel i (i+1) where
 run_cmd do
   let e := wasOriginallyTheorem (← getEnv) `foo.go
   logInfo m!"{e}"
+
+
+set_option pp.rawOnError true in
+#info_trees! in
+local instance (priority := 300) : Nonempty Bool := ⟨ true⟩
 
 #info_trees! in
 mutual
