@@ -129,20 +129,78 @@ end Mathlib.Linter
 
 namespace Lean.Elab.InfoTree
 
+
+/--
+Finds the first result of `f ctx info children` which is `some a`, descending the
+tree from the top. Merges and updates contexts as it descends the tree.
+
+If provided, `ctx?` is used as an initial context. This can be helpful when invoking `findSome?` in
+the middle of a larger traversal.
+-/
+partial def findSome? {α} (f : ContextInfo → Info → PersistentArray InfoTree → Option α)
+    (t : InfoTree) (ctx? : Option ContextInfo := none) : Option α :=
+  go ctx? t
+where go ctx?
+  | context ctx t => go (ctx.mergeIntoOuter? ctx?) t
+  | node i ts =>
+    let a := match ctx? with
+      | none => none
+      | some ctx => f ctx i ts
+    a <|> ts.findSome? (go <| i.updateContext? ctx?)
+  | hole _ => none
+
+/--
+Returns the value of `f ctx info children` on the outermost `.node info children` which has
+context, having merged and updated contexts appropriately.
+
+If provided, `ctx?` is used as an initial context. This can be helpful when invoking `onFirstNode?`
+in the middle of a larger traversal.
+-/
+def onFirstNode? {α} (t : InfoTree) (f : ContextInfo → Info → PersistentArray InfoTree → α)
+    (ctx? : Option ContextInfo := none) : Option α :=
+  t.findSome? (ctx? := ctx?) fun ctx i ch => some (f ctx i ch)
+
+def getTopInfo? : InfoTree → Option Info
+| .context _ i => getTopInfo? i
+| .hole _ => none
+| .node i _ => some i
+
+
+def getTopNode? (t : InfoTree) (ctx? : Option ContextInfo := none) : Option (ContextInfo × Info × PersistentArray InfoTree) :=
+  t.onFirstNode? (ctx? := ctx?) (·,·,·)
+
+
 /--
 Get the `parentDecl`s of every elaborated body. This includes `let rec`/`where`
 definitions. Assumes that every declaration elaboration proceeds through `Lean.Elab.Term.BodyInfo`.
 -/
-def getDeclsByBody (t : InfoTree) : List Name :=
-  t.collectNodesBottomUp fun ctx i _ decls =>
+def getDeclsByBody (t : InfoTree) :
+    CommandElabM (List (Option Name × Option Nat × Bool × Option Format)) :=
+  t.collectNodesBottomUpM fun ctx i ch decls =>
     match i with
     | .ofCustomInfo i =>
-      if i.value.typeName == ``Lean.Elab.Term.BodyInfo then
-        if let some decl := ctx.parentDecl? then
-          decl :: decls
-        else decls
-      else decls
-    | _ => decls
+      if i.value.typeName == ``Lean.Elab.Term.BodyInfo then do
+        let decl := ctx.parentDecl?
+        let ch := ch.filter fun t => !t.getTopInfo? matches (some (.ofPartialTermInfo _))
+        if ch.size != 1 then
+          return (decl, some ch.size, false, none) :: decls
+        else
+          if let some (ctx, info, _) := ch[0]!.getTopNode? ctx then
+            if info matches .ofTermInfo _ || info matches .ofTacticInfo _ then
+              return decls
+            else
+              return (decl, none, true, some (← info.format ctx)) :: decls
+          else do
+            -- let fmt ← ch.foldlM (init := f!"[") fun fmt t => do
+            --   let f' ← t.format ctx
+            --   return fmt ++ f' ++ f!"];;["
+            let fmt ← match ch[0]! with
+              | .context .. => pure f!"context"
+              | .hole .. => pure "hole"
+              | .node i _ => i.format ctx
+            return (decl, none, false, some fmt) :: decls
+      else return decls
+    | _ => return decls
 
 
 /-- Collects all `parentDecl`s that appear at any point throughout the infotree. -/
@@ -156,14 +214,16 @@ where
   | node _ ch => ch.foldl (init := acc) go
   | .hole _ => acc
 
+-- .mergeSort fun n m => n.quickCmp m |>.isLE
 def compareDecl : Linter where
   run stx := do
-    let trees := (← getInfoState).substituteLazy.get.trees
-    for t in trees do
-      let bodies := t.getDeclsByBody.mergeSort fun n m => n.quickCmp m |>.isLE -- same as `NameSet`
-      let parents := t.getDeclsByParent.toList
-      unless bodies == parents do
-        logInfo m!"\nbodies: {bodies}\nparents: {parents}"
+    for t in ← getInfoTrees do
+      let decls ← t.getDeclsByBody
+      -- let parents := t.getDeclsByParent.toList
+      if !decls.isEmpty then
+        logInfo m!"got:\ndecls: {decls}"
+
+      -- unless bodies == parents do
 
 initialize addLinter compareDecl
 
