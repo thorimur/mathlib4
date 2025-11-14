@@ -84,6 +84,19 @@ def getDecls (t : InfoTree) : List Name :=
       else decls
     | _ => decls
 
+
+/-- Collects all `parentDecl`s that appear at any point throughout the infotree. -/
+partial def getDecls (t : InfoTree) : NameSet :=
+  go {} t
+where
+  /-- Visits all subinfotrees and collects `PartialContextInfo.parentDeclCtx`s directly. -/
+  go acc : InfoTree → NameSet
+  | .context (.parentDeclCtx decl) i => go (acc.insert decl) i
+  | .context _ i => go acc i
+  | node _ ch => ch.foldl (init := acc) go
+  | .hole _ => acc
+
+
 -- Id.run do
 --   let some decls ← t.visitM
 --     (postNode := fun ctx i _ decls => do
@@ -189,7 +202,6 @@ def isDecidableVariant (type : Expr) : Bool :=
     n == ``DecidableRel  ||
     n == ``DecidablePred ||
     n == ``Decidable
-
 
 /--
 The `unusedDecidable` linter checks if a theorem's hypotheses include `Decidable*` instances which

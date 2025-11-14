@@ -161,16 +161,21 @@ def onFirstNode? {α} (t : InfoTree) (f : ContextInfo → Info → PersistentArr
     (ctx? : Option ContextInfo := none) : Option α :=
   t.findSome? (ctx? := ctx?) fun ctx i ch => some (f ctx i ch)
 
-/-- Collects all `parentDecl`s that appear at any point throughout the infotree. -/
-partial def getDecls (t : InfoTree) : NameSet :=
-  go {} t
-where
-  /-- Visits all subinfotrees and collects `PartialContextInfo.parentDeclCtx`s directly. -/
-  go acc : InfoTree → NameSet
-  | .context (.parentDeclCtx decl) i => go (acc.insert decl) i
-  | .context _ i => go acc i
-  | node _ ch => ch.foldl (init := acc) go
-  | .hole _ => acc
+/--
+Get the `parentDecl`s of every elaborated body. This includes `let rec`/`where`
+definitions. Assumes that every declaration elaboration proceeds through `Lean.Elab.Term.BodyInfo`. This
+-/
+def getDeclsByBody (t : InfoTree) : List Name :=
+  t.collectNodesBottomUp fun ctx i _ decls =>
+    match i with
+    | .ofCustomInfo i =>
+      if i.value.typeName == ``Lean.Elab.Term.BodyInfo then
+        if let some decl := ctx.parentDecl? then
+          decl :: decls
+        else decls
+      else decls
+    | _ => decls
+
 
 /--
 Get the declarations elaborated in the infotree `t` which are theorems according to the
@@ -178,7 +183,7 @@ environment. This includes e.g. `instance`s of `Prop` classes in addition to dec
 using the keyword `theorem` directly.
 -/
 def getTheorems (t : InfoTree) (env : Environment) : List ConstantVal :=
-  t.getDecls.toList.filterMap env.findTheoremConstantVal?
+  t.getDeclsByBody.filterMap env.findTheoremConstantVal?
 
 /--
 Given a constant name, find the first `TermInfo` whose expression is exactly that constant. Expects
