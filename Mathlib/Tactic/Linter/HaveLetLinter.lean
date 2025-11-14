@@ -126,3 +126,45 @@ initialize addLinter haveLetLinter
 end haveLet
 
 end Mathlib.Linter
+
+namespace Lean.Elab.InfoTree
+
+/--
+Get the `parentDecl`s of every elaborated body. This includes `let rec`/`where`
+definitions. Assumes that every declaration elaboration proceeds through `Lean.Elab.Term.BodyInfo`.
+-/
+def getDeclsByBody (t : InfoTree) : List Name :=
+  t.collectNodesBottomUp fun ctx i _ decls =>
+    match i with
+    | .ofCustomInfo i =>
+      if i.value.typeName == ``Lean.Elab.Term.BodyInfo then
+        if let some decl := ctx.parentDecl? then
+          decl :: decls
+        else decls
+      else decls
+    | _ => decls
+
+
+/-- Collects all `parentDecl`s that appear at any point throughout the infotree. -/
+partial def getDeclsByParent (t : InfoTree) : NameSet :=
+  go {} t
+where
+  /-- Visits all subinfotrees and collects `PartialContextInfo.parentDeclCtx`s directly. -/
+  go acc : InfoTree → NameSet
+  | .context (.parentDeclCtx decl) i => go (acc.insert decl) i
+  | .context _ i => go acc i
+  | node _ ch => ch.foldl (init := acc) go
+  | .hole _ => acc
+
+def compareDecl : Linter where
+  run stx := do
+    let trees := (← getInfoState).substituteLazy.get.trees
+    for t in trees do
+      let bodies := t.getDeclsByBody.mergeSort fun n m => n.quickCmp m |>.isLE -- same as `NameSet`
+      let parents := t.getDeclsByParent.toList
+      unless bodies == parents do
+        logInfo m!"\nbodies: {bodies}\nparents: {parents}"
+
+initialize addLinter compareDecl
+
+end Lean.Elab.InfoTree
