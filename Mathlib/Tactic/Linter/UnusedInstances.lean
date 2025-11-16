@@ -92,22 +92,6 @@ where
 
 end Lean.Expr
 
-namespace Lean.Syntax
-
--- /-- Finds the first subtree of `stx` for which `p subtree` is `some a`, descending the tree from
--- the top. -/
--- partial def findSome? {α} (p : Syntax → Option α) : Syntax → Option α
---   | stx@(.node _ _ args) => p stx <|> args.findSome? (findSome? p)
---   | stx                  => p stx
-
--- /-- Returns `true` exactly when `stxᵢ.getRange? canonicalOnlyᵢ` are both `some _` and are equal. -/
--- def rangeEq (stx₁ stx₂ : Syntax) (canonicalOnly₁ canonicalOnly₂ := true) : Bool :=
---   match stx₁.getRange? canonicalOnly₁, stx₂.getRange? canonicalOnly₂ with
---   | some r₁, some r₂ => r₁ == r₂
---   | _, _ => false
-
-end Lean.Syntax
-
 namespace Lean.Elab.InfoTree
 
 /--
@@ -252,6 +236,7 @@ def _root_.Lean.Syntax.logUnusedInstancesInTheoremsWhere (cmd : Syntax)
     let thms := t.getTheorems (← getEnv) |>.filter declFilter
     for thm in thms do
       thm.onUnusedInstancesWhere instanceTypeFilter fun unusedParams =>
+        -- TODO: restore to log on type signature
         -- t.withDeclSigRef cmd thm.name do
           log t thm unusedParams
 
