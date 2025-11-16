@@ -10,7 +10,7 @@ import Batteries
 import Qq
 
 /-!
-# Unused Instance Hypotheses Linters
+# Linters for Unused Instances in Types
 
 This file declares linters which detect certain instance hypotheses in declarations that are unused
 in the remainder of the type.
@@ -113,8 +113,10 @@ namespace Lean.Elab.InfoTree
 Finds the first result of `f ctx info children` which is `some a`, descending the
 tree from the top. Merges and updates contexts as it descends the tree.
 
-If provided, `ctx?` is used as an initial context. This can be helpful when invoking `findSome?` in
-the middle of a larger traversal.
+`f` is **only** evaluated on nodes when some context is present. An initial context should be
+provided via the `ctx?` argument if invoking `findSome?` during a larger traversal of the infotree.
+A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus likely to
+cause `findSome?` to always return `none`.
 -/
 partial def findSome? {α} (f : ContextInfo → Info → PersistentArray InfoTree → Option α)
     (t : InfoTree) (ctx? : Option ContextInfo := none) : Option α :=
@@ -132,8 +134,10 @@ where go ctx?
 Finds the first result of `← f ctx info children` which is `some a`, descending the
 tree from the top. Merges and updates contexts as it descends the tree.
 
-If provided, `ctx?` is used as an initial context. This can be helpful when invoking `findSome?` in
-the middle of a larger traversal.
+`f` is **only** evaluated on nodes when some context is present. An initial context should be
+provided via the `ctx?` argument if invoking `findSomeM?` during a larger traversal of the
+infotree. A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus
+likely to cause `findSomeM?` to always return `none`.
 -/
 partial def findSomeM? {m : Type → Type} [Monad m] {α}
     (f : ContextInfo → Info → PersistentArray InfoTree → m (Option α))
@@ -154,11 +158,12 @@ where go ctx?
 Returns the value of `f ctx info children` on the outermost `.node info children` which has
 context, having merged and updated contexts appropriately.
 
-If provided, `ctx?` is used as an initial context. This can be helpful when invoking `onFirstNode?`
-in the middle of a larger traversal.
+If `ctx?` is `some ctx`, `ctx` is used as an initial context. A `ctx?` of `none` should **only** be
+used when operating on the first node of the entire infotree. Otherwise, it is likely that no
+context will be found.
 -/
-def onFirstNode? {α} (t : InfoTree) (f : ContextInfo → Info → PersistentArray InfoTree → α)
-    (ctx? : Option ContextInfo := none) : Option α :=
+def onFirstNode? {α} (t : InfoTree) (ctx? : Option ContextInfo)
+    (f : ContextInfo → Info → PersistentArray InfoTree → α) : Option α :=
   t.findSome? (ctx? := ctx?) fun ctx i ch => some (f ctx i ch)
 
 /--
