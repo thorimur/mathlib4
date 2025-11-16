@@ -6,8 +6,6 @@ Authors: Thomas R. Murrills
 import Mathlib.Init
 import Mathlib.Lean.Message
 import Mathlib.Tactic.Lemma
-import Batteries
-import Qq
 
 /-!
 # Linters for Unused Instances in Types
