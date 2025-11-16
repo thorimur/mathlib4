@@ -409,8 +409,9 @@ def unusedDecidable : Linter where
       fun _ thm unusedParams => do
         logLint linter.unusedDecidable (← getRef) m!"\
           {thm.name.unusedInstancesMsg unusedParams}\n\
-          Consider removing these hypotheses and using `classical` in the proof instead. For terms,
-          consider using `open Scoped classical in` at the term level (not the command level)."
+          Consider removing these hypotheses and using `classical` in the proof instead. \
+          For terms, consider using `open Scoped classical in` at the term level (not the command \
+          level)."
 
 initialize addLinter unusedDecidable
 
