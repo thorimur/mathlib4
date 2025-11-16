@@ -412,6 +412,8 @@ def unusedDecidable : Linter where
           Consider removing these hypotheses and using `classical` in the proof instead. For terms,
           consider using `open Scoped classical in` at the term level (not the command level)."
 
+initialize addLinter unusedDecidable
+
 end Decidable
 
 end Mathlib.Linter.UnusedInstances
