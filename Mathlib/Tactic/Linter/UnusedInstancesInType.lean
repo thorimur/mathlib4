@@ -19,7 +19,7 @@ Currently, these linters only handle theorems. (This also includes `lemma`s and 
 - `unusedDecidable` linter (currently off by default): suggests replacing type-unused `Decidable*`
   instance hypotheses, and could therefore be replaced by `classical` in the proof.
 
-TODO: log on type signature instad of whole command
+TODO: log on type signature instead of whole command
 TODO: add more linters!
 TODO: create Try This suggestions
 -/
