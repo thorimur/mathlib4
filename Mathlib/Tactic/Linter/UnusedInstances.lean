@@ -206,10 +206,6 @@ types and free variables of the unused parameters are available as
 `unusedParams : Array Parameter := #[p₁, p₂, ..., pₙ]`, as well as the theorem `thm : ConstantVal`
 and current infotree `t`, and run `log t thm unusedParams`.
 
-The ambient ref during `log t thm unusedParams` is the location of the type signature of the
-theorem `thm`, if it can be found; else, we use the location of the theorem's name; else, we use
-the whole command.
-
 A simple pattern is therefore
 ```
 fun _ thm unusedParams => do
@@ -236,9 +232,9 @@ def _root_.Lean.Syntax.logUnusedInstancesInTheoremsWhere (cmd : Syntax)
     let thms := t.getTheorems (← getEnv) |>.filter declFilter
     for thm in thms do
       thm.onUnusedInstancesWhere instanceTypeFilter fun unusedParams =>
-        -- TODO: restore to log on type signature
+        -- TODO: restore in order to log on type signature
         -- t.withDeclSigRef cmd thm.name do
-          log t thm unusedParams
+        log t thm unusedParams
 
 section Decidable
 
