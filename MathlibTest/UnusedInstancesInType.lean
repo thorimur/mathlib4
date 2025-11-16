@@ -1,4 +1,4 @@
-import Mathlib.Tactic.Linter.UnusedInstances
+import Mathlib.Tactic.Linter.UnusedInstancesInType
 
 set_option linter.unusedDecidable true
 
