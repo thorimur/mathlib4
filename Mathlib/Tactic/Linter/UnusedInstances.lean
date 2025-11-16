@@ -122,7 +122,7 @@ def getTheorems (t : InfoTree) (env : Environment) : List ConstantVal :=
 
 end Lean.Elab.InfoTree
 
-namespace Mathlib.Linter.UnusedInstances
+namespace Mathlib.Linter.UnusedInstancesInType
 
 /--
 A structure for storing information about a parameter of some declaration, usually within some
@@ -292,4 +292,4 @@ initialize addLinter unusedDecidable
 
 end Decidable
 
-end Mathlib.Linter.UnusedInstances
+end Mathlib.Linter.UnusedInstancesInType
