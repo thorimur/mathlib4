@@ -93,78 +93,78 @@ end Lean.Expr
 
 namespace Lean.Syntax
 
-/-- Finds the first subtree of `stx` for which `p subtree` is `some a`, descending the tree from
-the top. -/
-partial def findSome? {α} (p : Syntax → Option α) : Syntax → Option α
-  | stx@(.node _ _ args) => p stx <|> args.findSome? (findSome? p)
-  | stx                  => p stx
+-- /-- Finds the first subtree of `stx` for which `p subtree` is `some a`, descending the tree from
+-- the top. -/
+-- partial def findSome? {α} (p : Syntax → Option α) : Syntax → Option α
+--   | stx@(.node _ _ args) => p stx <|> args.findSome? (findSome? p)
+--   | stx                  => p stx
 
-/-- Returns `true` exactly when `stxᵢ.getRange? canonicalOnlyᵢ` are both `some _` and are equal. -/
-def rangeEq (stx₁ stx₂ : Syntax) (canonicalOnly₁ canonicalOnly₂ := true) : Bool :=
-  match stx₁.getRange? canonicalOnly₁, stx₂.getRange? canonicalOnly₂ with
-  | some r₁, some r₂ => r₁ == r₂
-  | _, _ => false
+-- /-- Returns `true` exactly when `stxᵢ.getRange? canonicalOnlyᵢ` are both `some _` and are equal. -/
+-- def rangeEq (stx₁ stx₂ : Syntax) (canonicalOnly₁ canonicalOnly₂ := true) : Bool :=
+--   match stx₁.getRange? canonicalOnly₁, stx₂.getRange? canonicalOnly₂ with
+--   | some r₁, some r₂ => r₁ == r₂
+--   | _, _ => false
 
 end Lean.Syntax
 
 namespace Lean.Elab.InfoTree
 
-/--
-Finds the first result of `f ctx info children` which is `some a`, descending the
-tree from the top. Merges and updates contexts as it descends the tree.
+-- /--
+-- Finds the first result of `f ctx info children` which is `some a`, descending the
+-- tree from the top. Merges and updates contexts as it descends the tree.
 
-`f` is **only** evaluated on nodes when some context is present. An initial context should be
-provided via the `ctx?` argument if invoking `findSome?` during a larger traversal of the infotree.
-A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus likely to
-cause `findSome?` to always return `none`.
--/
-partial def findSome? {α} (f : ContextInfo → Info → PersistentArray InfoTree → Option α)
-    (t : InfoTree) (ctx? : Option ContextInfo := none) : Option α :=
-  go ctx? t
-where go ctx?
-  | context ctx t => go (ctx.mergeIntoOuter? ctx?) t
-  | node i ts =>
-    let a := match ctx? with
-      | none => none
-      | some ctx => f ctx i ts
-    a <|> ts.findSome? (go <| i.updateContext? ctx?)
-  | hole _ => none
+-- `f` is **only** evaluated on nodes when some context is present. An initial context should be
+-- provided via the `ctx?` argument if invoking `findSome?` during a larger traversal of the infotree.
+-- A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus likely to
+-- cause `findSome?` to always return `none`.
+-- -/
+-- partial def findSome? {α} (f : ContextInfo → Info → PersistentArray InfoTree → Option α)
+--     (t : InfoTree) (ctx? : Option ContextInfo := none) : Option α :=
+--   go ctx? t
+-- where go ctx?
+--   | context ctx t => go (ctx.mergeIntoOuter? ctx?) t
+--   | node i ts =>
+--     let a := match ctx? with
+--       | none => none
+--       | some ctx => f ctx i ts
+--     a <|> ts.findSome? (go <| i.updateContext? ctx?)
+--   | hole _ => none
 
-/--
-Finds the first result of `← f ctx info children` which is `some a`, descending the
-tree from the top. Merges and updates contexts as it descends the tree.
+-- /--
+-- Finds the first result of `← f ctx info children` which is `some a`, descending the
+-- tree from the top. Merges and updates contexts as it descends the tree.
 
-`f` is **only** evaluated on nodes when some context is present. An initial context should be
-provided via the `ctx?` argument if invoking `findSomeM?` during a larger traversal of the
-infotree. A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus
-likely to cause `findSomeM?` to always return `none`.
--/
-partial def findSomeM? {m : Type → Type} [Monad m] {α}
-    (f : ContextInfo → Info → PersistentArray InfoTree → m (Option α))
-    (t : InfoTree) (ctx? : Option ContextInfo := none) : m (Option α) :=
-  go ctx? t
-where go ctx?
-  | context ctx t => go (ctx.mergeIntoOuter? ctx?) t
-  | node i ts => do
-    let a ← match ctx? with
-      | none => pure none
-      | some ctx => f ctx i ts
-    match a with
-    | some a => pure a
-    | none => ts.findSomeM? (go <| i.updateContext? ctx?)
-  | hole _ => pure none
+-- `f` is **only** evaluated on nodes when some context is present. An initial context should be
+-- provided via the `ctx?` argument if invoking `findSomeM?` during a larger traversal of the
+-- infotree. A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus
+-- likely to cause `findSomeM?` to always return `none`.
+-- -/
+-- partial def findSomeM? {m : Type → Type} [Monad m] {α}
+--     (f : ContextInfo → Info → PersistentArray InfoTree → m (Option α))
+--     (t : InfoTree) (ctx? : Option ContextInfo := none) : m (Option α) :=
+--   go ctx? t
+-- where go ctx?
+--   | context ctx t => go (ctx.mergeIntoOuter? ctx?) t
+--   | node i ts => do
+--     let a ← match ctx? with
+--       | none => pure none
+--       | some ctx => f ctx i ts
+--     match a with
+--     | some a => pure a
+--     | none => ts.findSomeM? (go <| i.updateContext? ctx?)
+--   | hole _ => pure none
 
-/--
-Returns the value of `f ctx info children` on the outermost `.node info children` which has
-context, having merged and updated contexts appropriately.
+-- /--
+-- Returns the value of `f ctx info children` on the outermost `.node info children` which has
+-- context, having merged and updated contexts appropriately.
 
-If `ctx?` is `some ctx`, `ctx` is used as an initial context. A `ctx?` of `none` should **only** be
-used when operating on the first node of the entire infotree. Otherwise, it is likely that no
-context will be found.
--/
-def onFirstNode? {α} (t : InfoTree) (ctx? : Option ContextInfo)
-    (f : ContextInfo → Info → PersistentArray InfoTree → α) : Option α :=
-  t.findSome? (ctx? := ctx?) fun ctx i ch => some (f ctx i ch)
+-- If `ctx?` is `some ctx`, `ctx` is used as an initial context. A `ctx?` of `none` should **only** be
+-- used when operating on the first node of the entire infotree. Otherwise, it is likely that no
+-- context will be found.
+-- -/
+-- def onFirstNode? {α} (t : InfoTree) (ctx? : Option ContextInfo)
+--     (f : ContextInfo → Info → PersistentArray InfoTree → α) : Option α :=
+--   t.findSome? (ctx? := ctx?) fun ctx i ch => some (f ctx i ch)
 
 /--
 Get the `parentDecl`s of every elaborated body. This includes `let rec`/`where`
@@ -191,56 +191,56 @@ using the keyword `theorem` directly.
 def getTheorems (t : InfoTree) (env : Environment) : List ConstantVal :=
   t.getDeclsByBody.filterMap env.findTheoremConstantVal?
 
-/--
-Given a constant name, find the first `TermInfo` whose expression is exactly that constant. Expects
-`decl` to be a fully resolved name.
--/
-def getConstTermInfo? (t : InfoTree) (decl : Name) : Option TermInfo :=
-  t.findSome? fun
-    | _, .ofTermInfo ti, _ => if ti.expr.isConstOf decl then some ti else none
-    | _, _, _ => none
+-- /--
+-- Given a constant name, find the first `TermInfo` whose expression is exactly that constant. Expects
+-- `decl` to be a fully resolved name.
+-- -/
+-- def getConstTermInfo? (t : InfoTree) (decl : Name) : Option TermInfo :=
+--   t.findSome? fun
+--     | _, .ofTermInfo ti, _ => if ti.expr.isConstOf decl then some ti else none
+--     | _, _, _ => none
 
-/--
-Get the syntax of the `TermInfo` corresponding to the first appearance of `decl` as an
-`Expr.const ..`.
+-- /--
+-- Get the syntax of the `TermInfo` corresponding to the first appearance of `decl` as an
+-- `Expr.const ..`.
 
-Usually, this is the syntax of the identifier occurring after a token like `def` or `theorem`,
-*excluding*  universe syntax (i.e., `id` in `$id$[.{$_,*}]?`). In the case of `instance` with no
-identifier, the `instance` token is used.
+-- Usually, this is the syntax of the identifier occurring after a token like `def` or `theorem`,
+-- *excluding*  universe syntax (i.e., `id` in `$id$[.{$_,*}]?`). In the case of `instance` with no
+-- identifier, the `instance` token is used.
 
-Note that the behavior described here is undocumented, and subject to change.
--/
-def getConstRef? (t : InfoTree) (decl : Name) : Option Syntax :=
-  t.getConstTermInfo? decl |>.map (·.stx)
+-- Note that the behavior described here is undocumented, and subject to change.
+-- -/
+-- def getConstRef? (t : InfoTree) (decl : Name) : Option Syntax :=
+--   t.getConstTermInfo? decl |>.map (·.stx)
 
-/--
-Attempts to run `x : m α` with the monad's ref set to the syntax for the type signature of the
-originating syntax of `decl` within the syntax `cmd`, according to the information linking the name
-`decl` to its syntax in the infotree `t`.
+-- /--
+-- Attempts to run `x : m α` with the monad's ref set to the syntax for the type signature of the
+-- originating syntax of `decl` within the syntax `cmd`, according to the information linking the name
+-- `decl` to its syntax in the infotree `t`.
 
-If the type signature's position info cannot be found, uses the position info of the syntax for
-`decl` found in `t`. If that can't be found either, uses `cmd` as the ref.
+-- If the type signature's position info cannot be found, uses the position info of the syntax for
+-- `decl` found in `t`. If that can't be found either, uses `cmd` as the ref.
 
-For now, only handles declarations originating from `theorem`, `lemma`, and `instance` (including
-when nested in `mutual` blocks or buried somewhere in `cmd`). Does not handle `let rec`/
-`where`-style `let rec` declarations.
--/
-private def withDeclSigRef {m : Type → Type} [Monad m] [MonadRef m] {α}
-    (t : InfoTree) (cmd : Syntax) (decl : Name) (x : m α) : m α := withRef cmd do
-  let some idRef := t.getConstRef? decl | x
-  let sigRef? := cmd.findSome? fun
-    | `(Parser.Command.theorem| theorem $id$[.{$_,*}]? $sig:declSig $_:declVal)
-    | `(«lemma»| lemma $id$[.{$_,*}]? $sig:declSig $_:declVal)
-    | `(Parser.Command.instance| $_:attrKind instance $[$_:namedPrio]?
-        $id$[.{$_,*}]? $sig:declSig $_:declVal) =>
-      if id.raw.rangeEq idRef then sig else none
-    -- When no `declId` is present, Lean uses the position information for the `instance` token.
-    | `(Parser.Command.instance| $_:attrKind instance%$tk $[$_:namedPrio]?
-        $sig:declSig $_:declVal) => if tk.rangeEq idRef then sig else none
-    -- TODO: handle `let rec` decls (after `where`), handle defs etc.
-    | _ => none
-  -- Fall back to `idRef` if `sigRef` is not found or has no position info.
-  withRef idRef <| withRef? sigRef? x
+-- For now, only handles declarations originating from `theorem`, `lemma`, and `instance` (including
+-- when nested in `mutual` blocks or buried somewhere in `cmd`). Does not handle `let rec`/
+-- `where`-style `let rec` declarations.
+-- -/
+-- private def withDeclSigRef {m : Type → Type} [Monad m] [MonadRef m] {α}
+--     (t : InfoTree) (cmd : Syntax) (decl : Name) (x : m α) : m α := withRef cmd do
+--   let some idRef := t.getConstRef? decl | x
+--   let sigRef? := cmd.findSome? fun
+--     | `(Parser.Command.theorem| theorem $id$[.{$_,*}]? $sig:declSig $_:declVal)
+--     | `(«lemma»| lemma $id$[.{$_,*}]? $sig:declSig $_:declVal)
+--     | `(Parser.Command.instance| $_:attrKind instance $[$_:namedPrio]?
+--         $id$[.{$_,*}]? $sig:declSig $_:declVal) =>
+--       if id.raw.rangeEq idRef then sig else none
+--     -- When no `declId` is present, Lean uses the position information for the `instance` token.
+--     | `(Parser.Command.instance| $_:attrKind instance%$tk $[$_:namedPrio]?
+--         $sig:declSig $_:declVal) => if tk.rangeEq idRef then sig else none
+--     -- TODO: handle `let rec` decls (after `where`), handle defs etc.
+--     | _ => none
+--   -- Fall back to `idRef` if `sigRef` is not found or has no position info.
+--   withRef idRef <| withRef? sigRef? x
 
 end Lean.Elab.InfoTree
 
@@ -312,7 +312,7 @@ private def _root_.Lean.ConstantVal.onUnusedInstancesWhere (decl : ConstantVal)
         logOnUnused unusedInstances
 
 -- TODO: check if type has `sorry` or we have errors
--- TODO: change docs if using `parentDeclCtx` strategy
+set_option linter.unusedVariables false in -- TODO: we plan to use these variables in the future
 /--
 Finds theorems whose bodies were elaborated in the current infotrees and whose (full)
 declaration names satisfy `nameFilter`. Checks their type to see if it contains instance hypotheses
@@ -356,7 +356,7 @@ def _root_.Lean.Syntax.logUnusedInstancesInTheoremsWhere (cmd : Syntax)
     let thms := t.getTheorems (← getEnv) |>.filter declFilter
     for thm in thms do
       thm.onUnusedInstancesWhere instanceTypeFilter fun unusedParams =>
-        t.withDeclSigRef cmd thm.name do
+        -- t.withDeclSigRef cmd thm.name do
           log t thm unusedParams
 
 section Decidable
