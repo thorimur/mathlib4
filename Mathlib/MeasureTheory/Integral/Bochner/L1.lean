@@ -3,7 +3,9 @@ Copyright (c) 2019 Zhouhang Zhou. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Zhouhang Zhou, Yury Kudryashov, Sébastien Gouëzel, Rémy Degenne
 -/
-import Mathlib.MeasureTheory.Integral.SetToL1
+module
+
+public import Mathlib.MeasureTheory.Integral.SetToL1
 
 /-!
 # Bochner integral
@@ -34,7 +36,7 @@ The Bochner integral is defined through the extension process described in the f
   functions `α →₁ₛ[μ] E` using `ContinuousLinearMap.extend` and the fact that the embedding of
   `α →₁ₛ[μ] E` into `α →₁[μ] E` is dense.
 
-## Notations
+## Notation
 
 * `α →ₛ E` : simple functions (defined in `Mathlib/MeasureTheory/Function/SimpleFunc.lean`)
 * `α →₁[μ] E` : functions in L1 space, i.e., equivalence classes of integrable functions (defined in
@@ -52,6 +54,8 @@ Note : `ₛ` is typed using `\_s`. Sometimes it shows as a box if the font is mi
 Bochner integral, simple function, function space, Lebesgue dominated convergence theorem
 
 -/
+
+@[expose] public section
 
 
 assert_not_exists Differentiable

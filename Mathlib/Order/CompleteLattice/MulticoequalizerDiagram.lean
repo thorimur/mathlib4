@@ -3,11 +3,13 @@ Copyright (c) 2025 Joël Riou. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Joël Riou
 -/
-import Mathlib.Order.CompleteLattice.Lemmas
-import Mathlib.CategoryTheory.Category.Preorder
-import Mathlib.CategoryTheory.Limits.Shapes.Multiequalizer
-import Mathlib.CategoryTheory.CommSq
-import Mathlib.Tactic.FinCases
+module
+
+public import Mathlib.Order.CompleteLattice.Lemmas
+public import Mathlib.CategoryTheory.Category.Preorder
+public import Mathlib.CategoryTheory.Limits.Shapes.Multiequalizer
+public import Mathlib.CategoryTheory.CommSq
+public import Mathlib.Tactic.FinCases
 
 /-!
 # Multicoequalizer diagrams in complete lattices
@@ -27,6 +29,8 @@ Again, when `T := Set X`, we shall show (TODO) that we obtain a multicoequalizer
 in the category of types.
 
 -/
+
+@[expose] public section
 
 universe u
 
@@ -81,7 +85,8 @@ structure MulticoequalizerDiagram : Prop where
 
 namespace MulticoequalizerDiagram
 
-attribute [local grind] MulticoequalizerDiagram MultispanShape.prod_fst MultispanShape.prod_snd
+attribute [local grind] MulticoequalizerDiagram
+attribute [local grind =] MultispanShape.prod_fst MultispanShape.prod_snd
 
 variable {x u v} (d : MulticoequalizerDiagram x u v)
 
@@ -116,9 +121,4 @@ lemma Lattice.BicartSq.multicoequalizerDiagram {T : Type u} [CompleteLattice T]
         else bif j then x₁ else x₂) where
   iSup_eq := by rw [← sq.max_eq, sup_comm, sup_eq_iSup]
   min_eq i j := by
-    #adaptation_note
-    /--
-    On `nightly-2025-09-10`, we need to disable the `ac` module due to an internal grind error.
-    This is likely the same problem as at https://github.com/leanprover/lean4/pull/10317
-    -/
-    grind -ac [inf_idem, inf_comm]
+    grind [inf_idem, inf_comm]
