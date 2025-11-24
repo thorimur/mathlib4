@@ -105,16 +105,37 @@ might find by considering every `parentDeclCtx` throughout the infotree.
 
 Assumes that every body elaboration proceeds through `Lean.Elab.Term.BodyInfo`.
 -/
-def getDeclsByBody (t : InfoTree) : List Name :=
-  t.collectNodesBottomUp fun ctx i _ decls =>
-    match i with
-    | .ofCustomInfo i =>
-      if i.value.typeName == ``Lean.Elab.Term.BodyInfo then
-        if let some decl := ctx.parentDecl? then
-          decl :: decls
-        else decls
-      else decls
-    | _ => decls
+partial def getDeclsByBody (t : InfoTree) : List Name :=
+  findParentDecl t |>.run [] |>.2
+where
+  findParentDecl : InfoTree → StateT (List Name) Id Unit
+    | .context (.parentDeclCtx declName) i => findBodyOf declName i
+    | .context _ i => findParentDecl i
+    | .node _ ch => ch.forM findParentDecl
+    | .hole _ => pure ()
+  findBodyOf (declName : Name) : InfoTree → StateT (List Name) Id Unit
+    | .context (.parentDeclCtx declName) i => findBodyOf declName i
+    | .context _ i => findBodyOf declName i
+    | .node i ch =>
+      match i with
+      | .ofCustomInfo i => do
+        if i.value.typeName == ``Lean.Elab.Term.BodyInfo then
+          modify (·.cons declName)
+          ch.forM findParentDecl -- find new decl
+        else
+          ch.forM (findBodyOf declName)
+      | _ => ch.forM (findBodyOf declName)
+    | .hole _ => pure ()
+
+  -- t.collectNodesBottomUp fun ctx i _ decls =>
+  --   match i with
+  --   | .ofCustomInfo i =>
+  --     if i.value.typeName == ``Lean.Elab.Term.BodyInfo then
+  --       if let some decl := ctx.parentDecl? then
+  --         decl :: decls
+  --       else decls
+  --     else decls
+  --   | _ => decls
 
 /--
 Get the declarations elaborated in the infotree `t` which are theorems according to the
