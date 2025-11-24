@@ -98,9 +98,9 @@ have loose bound variables.
 private def _root_.Lean.ConstantVal.onUnusedInstancesWhere (decl : ConstantVal)
     (p : Expr → Bool) (logOnUnused : Array Parameter → TermElabM Unit) : CommandElabM Unit := do
   let unusedInstances := decl.type.getUnusedForallInstanceBinderIdxsWhere p
-  if let some maxIdx := unusedInstances.back? then liftTermElabM do
+  if h : unusedInstances.size ≠ 0 then liftTermElabM do
     unless decl.type.hasSorry do -- only check for `sorry` in the "expensive" case
-      forallBoundedTelescope decl.type (some <| maxIdx + 1)
+      forallBoundedTelescope decl.type (some <| unusedInstances.back + 1)
         (cleanupAnnotations := true) fun fvars _ => do
           let unusedInstances : Array Parameter ← unusedInstances.mapM fun idx =>
             return {
