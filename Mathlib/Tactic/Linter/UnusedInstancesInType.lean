@@ -233,4 +233,26 @@ initialize addLinter unusedDecidableInType
 
 end Decidable
 
+/-! TEMP -/
+
+def _root_.Lean.Syntax.hasWithInfo (source patt : Syntax) : Bool := Id.run do
+  for s in source.topDown do
+    if patt.eqWithInfo s then return true
+  return false
+
+open Parser.Term in
+def showUnusualSyntax : Linter where run stx := do
+  let mut l := []
+  for t in ← getInfoTrees do
+    l := l ++ (← t.collectTermInfoM fun _ ti => return do
+      let name ← ti.expr.constName?
+      guard !ti.stx.isIdent
+      guard !ti.stx.isOfKind identProjKind
+      guard !ti.stx.isOfKind ``dotIdent
+      guard <| stx.hasWithInfo ti.stx
+      return (name, format ti.stx))
+  unless l.isEmpty do logInfo m!"{l}"
+
+initialize addLinter showUnusualSyntax
+
 end Mathlib.Linter.UnusedInstancesInType
