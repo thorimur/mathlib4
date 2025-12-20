@@ -2,6 +2,7 @@ module
 
 import Lean
 import Batteries
+import all Lean.Parser.Basic
 import all Lean.Parser.Command
 
 /-!
@@ -13,6 +14,17 @@ TODO: docs
 open Lean Meta Elab Parser Command
 
 namespace Mathlib.Linter
+
+#print declaration
+#print leadingNode
+#check λ _ => true
+/-
+The real feature is that we want to collate these declarations and "see through"/flatten certain nodes. Makes me wonder if we want to create standalone accessors that don't need a structure? These two should be able to arise from collating.
+
+For the structure, thought, we should have some invariant that everything goes in order, right?
+
+What do we do about `<|>`? Custom inductive? `⊕`? Also possible for a structure to be on one side of the `<|>`; what then? Maybe the "flat" approach where they just so happen to be mutually exclusive is good. Custom inductive is nice for named constructors instead of trying the remember which came first.
+-/
 
 /-
 def declModifiers (inline : Bool) := leading_parser
