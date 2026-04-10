@@ -2,6 +2,9 @@ module
 
 public import Lean
 
+
+
+
 /-!
 # `#autonomize` for isolating declarations from their scopes
 
@@ -38,6 +41,7 @@ TODO: notation and syntax that's used, dependencies in the current file, depende
 
 
 open Lean Elab Command
+
 
 namespace Lean.Elab.Command
 
@@ -145,6 +149,131 @@ def zipScope? : ScopeZipperCommandElabM (Option Scope) := do
   return scope
 
 #check getAutoImplicits
+
+def getVariableSyntax? : CommandElabM (Option (TSyntax ``Parser.Command.variable)) := do
+  let { varDecls .. } ← getScope
+  if varDecls.isEmpty then return none
+  `(Parser.Command.variable| variable $varDecls*)
+
+def getIncludeSyntax? : CommandElabM (Option (TSyntax ``Parser.Command.include)) := do
+  let { includedVars .. } ← getScope
+  if includedVars.isEmpty then return none
+  -- TODO: the `Name`s are `varUIDs` with hygiene, but should we strip that in making the idents?
+  `(Parser.Command.include| include $(includedVars.toArray.map mkIdent)*)
+
+def getOmitSyntax? : CommandElabM (Option (TSyntax ``Parser.Command.omit)) := do
+  let { omittedVars, varUIds, varDecls .. } ← getScope
+  if omittedVars.isEmpty then return none
+  let mut omittedIdentOrBinder : TSyntaxArray [`ident, `Lean.Parser.Term.instBinder] := #[]
+  for var in omittedVars do
+    for uid in varUIds, stx in varDecls do
+      if uid = var then
+        if stx.raw.isOfKind ``Parser.Term.instBinder then
+          omittedIdentOrBinder := omittedIdentOrBinder.push ⟨stx.raw⟩
+        else
+          -- TODO: remove scopes?
+          omittedIdentOrBinder := omittedIdentOrBinder.push (mkIdent uid)
+        break
+  -- TODO: the `Name`s are `varUIDs` with hygiene, but should we strip that in making the idents?
+  `(Parser.Command.omit| omit $(omittedIdentOrBinder)*)
+
+def _root_.Lean.Options.minus (opts minusOpts : Options) := Id.run do
+  let mut opts := opts
+  for (key, val) in minusOpts do
+    let some minusVal := opts.get? key | continue
+    if minusVal == val then
+      opts := opts.erase key
+  return opts
+
+def getNewOptions : CommandElabM Options := do
+  match ← getScopes with
+  | scopes@h:(scope :: _ :: _) => do
+    let initialScope := scopes.getLast (by grind)
+    return scope.opts.minus initialScope.opts
+  | _ => return {} -- if there is only the initial scope, there are no new options
+
+def _root_.Lean.DataValue.toSetOptionSyntax? : DataValue → Option Syntax
+  | .ofNat n      => Syntax.mkNumLit (toString n)
+  | .ofBool true  => Syntax.atom .none "true"
+  | .ofBool false => Syntax.atom .none "true"
+  | .ofString str => Syntax.mkStrLit str
+  | _ => none
+
+def _root_.Lean.Options.toSyntax (opts : Options) :
+    CommandElabM (Array (TSyntax ``Parser.Command.set_option)) := do
+  let mut optStx := #[]
+  for (key, val) in opts do
+    let some valStx := val.toSetOptionSyntax? | continue
+    -- Note: this is a bit of a hack since it might be an `.atom`, and `TSyntax` only recognizes stra and num
+    optStx := optStx.push <|← `(Parser.Command.set_option| set_option $(mkIdent key) $(⟨valStx⟩))
+  return optStx
+
+def getNewSetOptionSyntax : CommandElabM (Array (TSyntax ``Parser.Command.set_option)) := do
+  (← getNewOptions).toSyntax
+
+def getCurrNamespaceSyntax : CommandElabM (TSyntax ``Parser.Command.namespace) := do
+  `(Parser.Command.namespace| namespace $(mkIdent <|← getCurrNamespace))
+
+inductive MergeResult where
+  | new (openDecl : OpenDecl)
+  | replace (openDecl : OpenDecl)
+
+-- TODO: combine explicits and such. For now, just ignore preexisting ones.
+def deduplicateOpenDecls (openDecls : List OpenDecl) : Array OpenDecl :=
+  -- Note that the innermost openDecls come first, so we `foldr` to give earlier opens precedence.
+  openDecls.foldr (init := #[]) fun openDecl acc =>
+    if acc.contains openDecl then acc else acc.push openDecl
+
+/-
+Strategy: elabOpenDecl one by one?
+-/
+
+
+-- def getOpenDeclSyntax : CommandElabM
+/-
+# NEXT
+So here's the current strategy:
+- Try to reproduce just the current scope.
+- Have a "check" phase where we try and compare scopes up to <something>. E.g. duplicated open decls are fine, different orderings...probably fine?
+- If the check doesn't match, try to add `_root_` for any failing opens?
+  - I think this means don't go for syntax too soon. Well...it's hard to track the errors.
+  - Would be nice if every function could explain why it failed to something else.
+- we switch to "condensed stack" mode where we recreate the whole stack.
+- We can have a "full stack" mode that captures everything, including sections.
+
+- Then there's a separate phase of "working" where the commands in our block may alter the scope, and we need to be prepared for that. Maybe on any `end` we switch to full stack? Can anything else pop a scope or modify scopes? `end_local_scoped`, right?
+
+
+- Remember, the goal is integrating with other scopes.
+
+Some edge cases:
+- New declarations in the environment changed which namespaces we could resolve in `open`.
+
+Interesting idea: a version of shake that goes further and completely restructures where declarations should live. But part of this is extending the "module use" recording to know which command is necessary.
+
+Actually, would be great to *see* this instead. And drag little things around, maybe?
+
+
+I'm now imagining a language in which this sort of change-such-that is first class. Everything is bidirectional, everything has a derivative, or some 2-categorical equipment that lets us say "find the thing which would create this thing..."
+-/
+
+#check Nat
+
+-- Why doesn't regular `Nat` show up, and why does `Lean.Nat` show up twice? Scoping activated by `namespace`?
+open Nat hiding add
+
+
+
+def reifyScopeAux (acc : ReifiedScopeData)
+
+
+
+
+
+
+
+
+
 /-
 So we've got to remove scopes, then put them back locally, then put them back more broadly...
 
