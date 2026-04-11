@@ -1,6 +1,9 @@
 module
 
 public import Lean
+public meta import Lean.Elab.BuiltinCommand
+
+public meta section
 
 
 
@@ -150,6 +153,8 @@ def zipScope? : ScopeZipperCommandElabM (Option Scope) := do
 
 #check getAutoImplicits
 
+end Lean.Elab.Command.ScopeZipper
+
 def getVariableSyntax? : CommandElabM (Option (TSyntax ``Parser.Command.variable)) := do
   let { varDecls .. } ← getScope
   if varDecls.isEmpty then return none
@@ -192,18 +197,29 @@ def getNewOptions : CommandElabM Options := do
     return scope.opts.minus initialScope.opts
   | _ => return {} -- if there is only the initial scope, there are no new options
 
-def _root_.Lean.DataValue.toSetOptionSyntax? : DataValue → Option Syntax
+def _root_.Lean.DataValue.toSetOptionValueSyntax? : DataValue → Option Syntax
   | .ofNat n      => Syntax.mkNumLit (toString n)
-  | .ofBool true  => Syntax.atom .none "true"
-  | .ofBool false => Syntax.atom .none "true"
+  | .ofBool b  => Syntax.atom .none (toString b)
   | .ofString str => Syntax.mkStrLit str
+  | _ => none
+
+def unreifyOptionValue? (val : Syntax) : Option DataValue :=
+  match val.isStrLit? with
+  | some str => some <| .ofString str
+  | none     =>
+  match val.isNatLit? with
+  | some num => some <| .ofNat num
+  | none     =>
+  match val with
+  | Syntax.atom _ "true"  => some <| .ofBool true
+  | Syntax.atom _ "false" => some <| .ofBool false
   | _ => none
 
 def _root_.Lean.Options.toSyntax (opts : Options) :
     CommandElabM (Array (TSyntax ``Parser.Command.set_option)) := do
   let mut optStx := #[]
   for (key, val) in opts do
-    let some valStx := val.toSetOptionSyntax? | continue
+    let some valStx := val.toSetOptionValueSyntax? | continue
     -- Note: this is a bit of a hack since it might be an `.atom`, and `TSyntax` only recognizes stra and num
     optStx := optStx.push <|← `(Parser.Command.set_option| set_option $(mkIdent key) $(⟨valStx⟩))
   return optStx
@@ -211,12 +227,14 @@ def _root_.Lean.Options.toSyntax (opts : Options) :
 def getNewSetOptionSyntax : CommandElabM (Array (TSyntax ``Parser.Command.set_option)) := do
   (← getNewOptions).toSyntax
 
-def getCurrNamespaceSyntax : CommandElabM (TSyntax ``Parser.Command.namespace) := do
-  `(Parser.Command.namespace| namespace $(mkIdent <|← getCurrNamespace))
+def getCurrNamespaceSyntax : CommandElabM (Option (TSyntax ``Parser.Command.namespace)) := do
+  let ns ← getCurrNamespace
+  if ns.isAnonymous then pure none else `(Parser.Command.namespace| namespace $(mkIdent ns))
 
 inductive MergeResult where
   | new (openDecl : OpenDecl)
   | replace (openDecl : OpenDecl)
+
 
 -- TODO: combine explicits and such. For now, just ignore preexisting ones.
 def deduplicateOpenDecls (openDecls : List OpenDecl) : Array OpenDecl :=
@@ -227,6 +245,250 @@ def deduplicateOpenDecls (openDecls : List OpenDecl) : Array OpenDecl :=
 /-
 Strategy: elabOpenDecl one by one?
 -/
+
+/-
+Okay, so here's what I realized. We should just be maximally reifying. The integrated syntax with nice opens does *not* need to be the anonymous section syntax. They fulfill different roles.
+
+-/
+
+
+-- Exceptions:
+-- Does not preserve full state stack, so end_local_scope won't work.
+-- Does not preserve sections.
+-- Does not preserve options set by default, deliberately. This could be changed for moving between projects
+-- We *could* preserve this but it sounds awful.
+-- TODO: switch order?
+public section
+
+-- TODO: prepend `_root_` instead of `@` for copy-paste affordance? Or discourage this to avoid making it easy to "hold it wrong"?
+syntax reifiedExplicitOpenStx := "(" ident " → " ident ")"
+syntax reifiedSimpleOpenStx := &" @" noWs ident (" hiding " ident*)?
+syntax reifiedOpenDecl := reifiedSimpleOpenStx <|> reifiedExplicitOpenStx
+syntax reifiedOpenStx := "open " reifiedOpenDecl*
+syntax reifiedVarStx := Parser.Command.variable (ppLine Parser.Command.include)? (ppLine Parser.Command.omit)?
+syntax reifiedOpenScopedDecl := &"@" noWs ident
+syntax reifiedOpenScopedStx := "open" ppSpace "scoped" reifiedOpenScopedDecl*
+syntax reifiedOptionKeyValue := ident ppSpace optionValue
+syntax reifiedSetOptionsStx := "set_options " reifiedOptionKeyValue,*
+
+syntax scopeStx := Parser.Command.sectionHeader &"scope" ppIndent(
+  (ppLine Parser.Command.universe)?
+  (ppLine Parser.Command.namespace)?
+  (ppLine reifiedOpenStx)?
+  (ppLine reifiedOpenScopedStx)? -- TODO: local?
+  (ppLine reifiedSetOptionsStx)?
+  (ppLine reifiedVarStx)?)
+
+syntax "anonymous " scopeStx ppLine "in " "section" command : command
+
+-- TODO: open scoped, etc.
+
+partial def Lean.Syntax.merge! : Syntax → Syntax → Syntax
+  | .node info `null args, .node _ `null #[] => .node info `null args
+  | .node _ `null #[], .node info `null args => .node info `null args
+  | .node info kind₁ args₁, .node _ _ args₂ =>
+    .node info kind₁ (args₁.zipWith (·.merge!) args₂)
+  | .missing, stx => stx
+  | stx, _ => stx
+
+def Bool.toDummyOptional? (b : Bool) : Option Syntax :=
+  if b then some .missing else none
+
+open Parser.Command in
+def Lean.Elab.Command.Scope.toSectionHeader {m} [Monad m] [MonadQuotation m] :
+    Scope → m (TSyntax ``sectionHeader)
+  | { isPublic, isMeta, isNoncomputable, attrs .. } => do
+    letI toDummyOptional? (b : Bool) : Option Syntax :=
+      if b then some .missing else none
+    let pubTk    := toDummyOptional? isPublic
+    let metaTk   := toDummyOptional? isMeta
+    let exposeTk := toDummyOptional? !attrs.isEmpty
+    let ncTk     := toDummyOptional? isNoncomputable
+    `(sectionHeader|
+      $[@[expose%$exposeTk]]? $[public%$pubTk]? $[noncomputable%$ncTk]? $[meta%$metaTk]?)
+
+def unreifySectionHeader (header : TSyntax ``Parser.Command.sectionHeader) : CommandElabM Unit :=
+  match header with
+  | `(Parser.Command.sectionHeader|
+    $[@[expose%$exposeTk]]? $[public%$pubTk]? $[noncomputable%$ncTk]? $[meta%$metaTk]?) => do
+    let isPublic := pubTk.isSome
+    let isMeta := metaTk.isSome
+    let attrs : List (TSyntax ``Parser.Term.attrInstance) ←
+      if let some exposeTk := exposeTk then
+        pure [← withRef exposeTk `(Parser.Term.attrInstance| expose)] else pure []
+    let isNoncomputable := ncTk.isSome
+    modifyScope fun s => { s with isPublic, isMeta, isNoncomputable, attrs }
+  | _ => throwUnsupportedSyntax
+
+def reifyOpenDecls {m} [Monad m] [MonadQuotation m] (openDecls : List OpenDecl) :
+    m (Option (TSyntax ``reifiedOpenStx)) := do
+  let reifiedOpens ← openDecls.foldrM (init := #[]) fun
+    | .explicit id declName, acc => return acc.push <|←
+      `(reifiedOpenDecl| ($(mkIdent id) → $(mkIdent declName)))
+    | .simple ns except, acc => return acc.push <|←
+      if except.isEmpty then `(reifiedOpenDecl| @$(mkIdent ns)) else
+        let except := except.toArray.map mkIdent
+        `(reifiedOpenDecl| @$(mkIdent ns) hiding $except*)
+  if reifiedOpens.isEmpty then return none else
+    `(reifiedOpenStx| open $reifiedOpens*)
+
+    -- let mut header : Syntax ← `(sectionHeader|)
+    -- unless attrs.isEmpty do
+    --   header.setArg
+    -- if isPublic then
+    --   header.setArg
+    -- let metaTk? ← if isMeta then some <$> `(sectionHeader| meta) else pure none
+    -- if attrs.isEmpty then
+    --   `($pubTk?)
+
+-- def getFullVariableSyntax
+
+def Lean.Name.foldrPrefix {α} (n : Name) (init : α) (f : Name → α → α) :=
+  let val := f n init
+  match n with
+  | .anonymous => val
+  | .str pre _ | .num pre _ => pre.foldrPrefix val f
+
+protected def IO.extraScoped (env : Environment) (ns : Name) (openDecls : List OpenDecl) :
+    IO NameSet := do
+  let impliedScopes : List Name := openDecls.filterMap fun
+    | .simple ns _ => some ns
+    | _ => none
+  let impliedScopes := ns.foldrPrefix (init := impliedScopes) fun n acc =>
+    if n.isAnonymous then acc else acc.insert n
+  -- what if we used just e.g. the `parserExtension`? or some other basic scopedEnvExtension? take it out of IO?
+  let some first := (← scopedEnvExtensionsRef.get)[0]? | return {}
+  let s :: _ := first.ext.getState env |>.stateStack | return {}
+  return s.activeScopes.eraseMany impliedScopes -- TODO: make an iterator, this isn't great
+
+
+def extraScoped : CommandElabM NameSet := do
+  IO.extraScoped (← getEnv) (← getCurrNamespace) (← getScope).openDecls
+
+def getUniverseStx : CommandElabM (Option <| TSyntax ``Parser.Command.universe) := do
+  let levelNames := (← getScope).levelNames
+  if levelNames.isEmpty then pure none else
+    some <$> `(Parser.Command.universe| universe $(levelNames.toArray.map mkIdent)*)
+
+def reifyScope : CommandElabM (TSyntax ``scopeStx) := do
+  let sectionHeader ← (← getScope).toSectionHeader
+  let universes ← getUniverseStx
+  let namespaceStx ← getCurrNamespaceSyntax
+  let opens ← reifyOpenDecls (← getScope).openDecls
+
+  let variables ← (← getVariableSyntax?).mapM fun vars => do
+    `(reifiedVarStx| $vars $(← getIncludeSyntax?)? $(← getOmitSyntax?)?)
+
+  let extraScopedNames ← extraScoped
+  let extraScoped ← if extraScopedNames.isEmpty then pure none else
+    let extraScoped ← extraScopedNames.toArray.mapM fun n => `(reifiedOpenScopedDecl| @$(mkIdent n))
+    some <$> `(reifiedOpenScopedStx| open scoped $extraScoped*)
+
+  let newOpts ← getNewOptions -- TODO: actually, the base scope may be polluted, right? So maybe just list all of them.
+  let setOptions ← do
+    let mut kvs := #[]
+    for (key, val) in newOpts do
+      let some val := val.toSetOptionValueSyntax? | continue
+      kvs := kvs.push <|← `(reifiedOptionKeyValue| $(mkIdent key) $(⟨val⟩))
+    if kvs.isEmpty then pure none else some <$> `(reifiedSetOptionsStx| set_options $kvs,*)
+
+  `(scopeStx| $sectionHeader scope
+    $[$universes]?
+    $[$namespaceStx]?
+    $[$opens]?
+    $[$extraScoped]?
+    $[$setOptions]?
+    $[$variables]?) -- TODO: technically the variable parsing could change if a scope is opened earlier. This is probably important...it'll mean (1) detecting if any variable syntax is scoped (2) writing a parser for `scope` that opens the named scopes!
+
+    -- We also could account for `open (scoped) ... in variable` but it would have to be ad-hoc.
+
+def unreifyOpenDecl : TSyntax ``reifiedOpenDecl → CommandElabM OpenDecl
+  | `(reifiedSimpleOpenStx| @$id $[hiding $hidden*]?) => do
+    let except := if let some hidden := hidden then hidden.map (·.getId) |>.toList else []
+    activateScoped id.getId
+    return .simple id.getId except
+  | `(reifiedExplicitOpenStx| ($id → $decl)) => return .explicit id.getId decl.getId
+  | _ => throwUnsupportedSyntax
+
+def unreifyOpenDecls (openDeclsStx : TSyntaxArray ``reifiedOpenDecl) : CommandElabM Unit := do
+  let openDecls ← openDeclsStx.foldlM (init := []) fun openDecls openDeclStx =>
+    return (← unreifyOpenDecl openDeclStx) :: openDecls
+  modifyScope fun s => { s with openDecls }
+
+-- TODO: constinfo at decls
+def unreifyScopeInBaseScope : TSyntax ``scopeStx → CommandElabM Unit
+  | `(scopeStx| $sectionHeader scope
+      $[universe $[$levelNames:ident]*]?
+      $[$namespaceStx]?
+      $[open $openDecls:reifiedOpenDecl*]?
+      $[open scoped $openScopedDecls:reifiedOpenScopedDecl*]?
+      $[set_options $keyVals:reifiedOptionKeyValue,*]?
+      $[$vars]?) => do
+    let [_] ← getScopes
+      | throwError "Other scopes are active; expected no scopes to be active."
+    -- TODO: check that it's "pure", i.e. actually the base scope?
+    unreifySectionHeader sectionHeader
+    if let some levelNames := levelNames then
+      modifyScope fun s => { s with levelNames := levelNames.map (·.getId) |>.toList }
+    if let some ns := namespaceStx then
+      elabNamespace ns
+    if let some openDecls := openDecls then
+      unreifyOpenDecls openDecls
+    if let some openScopedDecls := openScopedDecls then
+      for openScoped in openScopedDecls do
+        let `(reifiedOpenScopedDecl| @$id) := openScoped | throwUnsupportedSyntax
+        activateScoped id.getId
+    if let some keyVals := keyVals then
+      for keyVal in keyVals.getElems do
+        let `(reifiedOptionKeyValue| $id $val) := keyVal | throwUnsupportedSyntax
+        -- Gets us info.
+        let opts ← Elab.elabSetOption id val
+        modifyScope fun s => { s with opts }
+    if let some vars := vars then
+      let `(reifiedVarStx| $vars $[$included]? $[$omitted]?) := vars | throwUnsupportedSyntax
+      elabVariable vars
+      if let some included := included then elabInclude included
+      if let some omitted  := omitted  then elabOmit omitted
+  | _ => throwUnsupportedSyntax
+
+-- Next: spin it up, and trace influences, then skimmerize!
+-- would be neat to create a visualization of all commands and how they link up that let you play with where they are. Maybe Claude could help with that, seeing as it's frontend stuff.
+
+-- Integration is really next. We need to diff underneath `withoutModifyingScopesOrEnv`?
+
+open Meta.Tactic.TryThis
+
+syntax "show_current " ("scope?" <|> scopeStx) : command
+
+elab_rules : command
+| `(show_current scope?%$tk) => do
+  liftCoreM <| addSuggestion tk <|← reifyScope
+| `(show_current $reified:scopeStx) => do
+  let scopeStx ← reifyScope
+  unless scopeStx.raw.structEq reified do
+    liftCoreM <| addSuggestion reified scopeStx
+
+universe u
+
+variable (x : Nat)
+
+show_current public meta scope
+    universe u
+    open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis
+    variable (x : Nat)
+
+syntax "reset_to" ("scope?" <|> scopeStx) : command
+
+#check
+
+def getResetScope : CommandElabM (List Scope × )
+
+elab_rules : command
+| `(reset_to scope?%$tk) => do
+  liftCoreM <| addSuggestion tk <|← reifyScope
+| `(reset_to $reified:scopeStx) => do
+  let
+  liftCoreM <| addSuggestion tk (scopeStx)
 
 
 -- def getOpenDeclSyntax : CommandElabM
