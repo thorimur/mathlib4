@@ -2,6 +2,8 @@ module
 
 public import Lean
 public meta import Lean.Elab.BuiltinCommand
+public meta import Lean.PrettyPrinter.Delaborator
+import Batteries
 
 public meta section
 
@@ -479,9 +481,90 @@ show_current public meta scope
 
 syntax "reset_to" ("scope?" <|> scopeStx) : command
 
-#check
+#check MessageData.signature
 
-def getResetScope : CommandElabM (List Scope × )
+open Lean
+#check Parser.Command.declaration
+syntax defLike := "def_like " term
+syntax theoremLike := "theorem_like " term
+-- syntax instanceLike := "instance_like " ident
+syntax (name := declarationLike) Parser.Command.declModifiersF
+  (defLike <|> theoremLike) : command
+
+-- def suggestDeclWithType (n : Name) : CommandElabM Name := do
+
+
+open Lean Meta Elab Parser PrettyPrinter Delaborator SubExpr Command
+
+instance : Repr Std.Format.FlattenBehavior := ⟨fun _ _ => f!"<flatten>"⟩
+
+deriving instance Repr for Std.Format
+
+open Term
+def delabToDeclSigWithId (t : Term) (defKind : Bool) :
+    TermElabM (TSyntax ``declId × TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
+  let (type, levelParams, newName) ← do
+    if let `(term|$id:ident) := t then
+      let n ← resolveGlobalConstNoOverload id
+      let info ← getConstInfo n
+      pure (info.type, info.levelParams, id.getId.appendAfter "'")
+    else
+      let e ← elabTerm t none
+      synthesizeSyntheticMVarsNoPostponing
+      let type ← inferType e
+      pure (type, [], `foo)
+  -- TODO: could use the infos for hovers here
+  let (sig, _) ← delabCore type (delab := delabForallParamsWithSignature fun groups type => do
+    show DelabM <| TSyntax (if defKind then ``optDeclSig else ``declSig) from do
+      if h : defKind then
+        let stx ← `(optDeclSig| $groups* : $type)
+        pure <| by simp only [h]; exact stx
+      else
+        let stx ← `(declSig| $groups* : $type)
+        pure <| by simp only [h]; exact stx)
+  let id ← if levelParams.isEmpty then
+      `(declId| $(mkIdent newName))
+    else
+      `(declId| $(mkIdent newName).{$(levelParams.toArray.map Lean.mkIdent),*})
+  return (id, sig)
+
+
+elab_rules : command
+| `(declarationLike| $_ $d:defLike) => liftTermElabM do
+  let `(defLike| def_like $t:term) := d | throwUnsupportedSyntax
+  let (id, sig) ← delabToDeclSigWithId t true
+  let declStx ← `(declaration| def $id:declId $sig:optDeclSig := sorry)
+  addSuggestion d declStx
+| `(declarationLike| $_ $d:theoremLike) => liftTermElabM do
+  let `(theoremLike| theorem_like $t:term) := d | throwUnsupportedSyntax
+  let (id, sig) ← delabToDeclSigWithId t false
+  let declStx ← `(declaration| theorem $id:declId $sig:declSig := sorry)
+  addSuggestion d declStx
+
+#check List.dropAllButLast
+
+def _root_.Lean.ScopedEnvExtension.popAllScopes {α β σ} (ext : ScopedEnvExtension α β σ) (env : Environment) :
+    Environment :=
+  ext.ext.modifyState (asyncMode := .local) env fun s =>
+    match s.stateStack with
+    | stack@(_ :: _ :: _) => { s with stateStack := stack.dropAllButLast }
+    | _ => s
+
+def popAllScopes {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT (ST IO.RealWorld) m] :
+    m Unit :=
+  for ext in ← scopedEnvExtensionsRef.get do
+    modifyEnv ext.popAllScopes
+
+def getResetScopes : CommandElabM (List Scope × Environment) := do
+  let savedScopes ← getScopes; let env ← getEnv
+  modify fun s => { s with scopes := s.scopes.dropAllButLast }
+  popAllScopes
+  return (savedScopes, env)
+
+def resetScopes : CommandElabM Unit := do
+  modify fun s => { s with scopes := s.scopes.dropAllButLast }
+  popAllScopes
+
 
 elab_rules : command
 | `(reset_to scope?%$tk) => do
