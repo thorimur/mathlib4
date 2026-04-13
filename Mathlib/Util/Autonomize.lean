@@ -734,19 +734,88 @@ universe v
 
 syntax "#radicalize" ppLine command : command
 
+/-- Reversed list of indices. Good for traversing. We assume indexing is fine. -/
+abbrev SyntaxIndex := List Nat
+
+variable (stx : Syntax) (n : Nat)
+
+instance : GetElem Syntax SyntaxIndex Syntax (fun _ _ => True) where
+  getElem stx path _ := path.foldr (init := stx) fun
+    | i, .node _ _ args => args.getD i .missing
+    | _, _ => .missing
+
+structure TopDownWithIndex where
+  firstChoiceOnly : Bool
+  stx : Syntax
+-- /--
+-- `for _ in stx.topDown` iterates through each node and leaf in `stx` top-down, left-to-right.
+-- If `firstChoiceOnly` is `true`, only visit the first argument of each choice node.
+-- -/
+def _root_.Lean.Syntax.topDownWithIdx (stx : Syntax) (firstChoiceOnly := false) : TopDownWithIndex :=
+  ⟨firstChoiceOnly, stx⟩
+
+partial instance {m} [Monad m] : ForIn m TopDownWithIndex (Syntax × SyntaxIndex) where
+  forIn := fun ⟨firstChoiceOnly, stx⟩ init f => do
+    let rec @[specialize] loop stx (idx : SyntaxIndex) b [Inhabited (type_of% b)] := do
+      match (← f (stx, idx) b) with
+      | ForInStep.yield b' =>
+        let mut b := b'
+        if let Syntax.node _ k args := stx then
+          if firstChoiceOnly && k == choiceKind then
+            return ← loop args[0]! (0 :: idx) b
+          else
+            for arg in args, i in 0...* do
+              match (← loop arg (i :: idx) b) with
+              | ForInStep.yield b' => b := b'
+              | ForInStep.done b'  => return ForInStep.done b'
+        return ForInStep.yield b
+      | ForInStep.done b => return ForInStep.done b
+    match (← @loop stx [] init ⟨init⟩) with
+    | ForInStep.yield b => return b
+    | ForInStep.done b  => return b
+
 elab_rules : command
-| `(#radicalize $cmd:command) => do
+| `(#radicalize%$tk $cmd:command) => do
   let mut declIds := #[]
+  let mut quickPosCheck := #[]
+  let map ← getFileMap
   for stx in cmd.raw.topDown do
-    if stx.isOfKind ``Parser.Command.declId then declIds := declIds.push stx
+    if stx.isOfKind ``Parser.Command.declId then
+      let some range := stx[0].getRange? | continue
+        unless stx[0].getId.getRoot == rootNamespace do
+          declIds := declIds.push (range, stx[0])
+          quickPosCheck := quickPosCheck.push <| map.toPosition range.start
   elabCommand cmd
-  let
+  if declIds.isEmpty then
+    let toDelete := tk.getPos?.bind fun pos₁ => cmd.raw.getPos?.map fun pos₂ =>
+      Syntax.ofRange ⟨pos₁, pos₂⟩
+    liftCoreM <| addSuggestion tk ""
+      (origSpan? := toDelete)
+      (header := "No declaration names to replace; `#radicalize` may be removed.")
+      (diffGranularity := .word)
+      (codeActionPrefix? := "Delete #radicalize")
+  else
+    declIds := declIds.qsort (·.1.1 < ·.1.1)
+    let mut loggedOnRadicalizeAlready := false
+    for (n, { selectionRange .. }) in declRangeExt.getState (← getEnv) (asyncMode := .sync) do
+      let sPos := selectionRange.pos
+      if quickPosCheck.any (· = selectionRange.pos) then
+        let range : Syntax.Range :=
+          ⟨map.ofPosition selectionRange.pos, map.ofPosition selectionRange.endPos⟩
+        -- TODO: is there a findErase?
+        let some idx := declIds.findFinIdx? (·.1 == range) | continue
+        let (_, declId) := declIds[idx]
+        declIds := declIds.eraseIdx idx
+        let n := privateToUserName n
+        if (idx : Nat) = 0 then
+          -- Also log it on the token for convenience.
+          liftCoreM <| addSuggestion tk (origSpan? := declId) (toString <| rootNamespace ++ n)
+          loggedOnRadicalizeAlready := true
+        liftCoreM <| addSuggestion declId (toString <| rootNamespace ++ n)
+    unless declIds.isEmpty do
+      for (_, declId) in declIds do
+        logWarningAt declId m!"`#radicalize` could not infer the full declaration name of {declId}."
 
-run_cmd do
-  let id ← `(declId| foo.{i})
-  logInfo m!"{(← liftTermElabM <| expandDeclId (← getCurrNamespace) (← getLevelNames) id {}).declName}"
-
-#check expandDecl
 
 def integrateScopes (scopeStx : TSyntax ``scopeStx) (exact := false) :
     CommandElabM ScopeDiff := do
