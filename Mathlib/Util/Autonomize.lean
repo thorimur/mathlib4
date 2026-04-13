@@ -5,6 +5,12 @@ public meta import Lean.Elab.BuiltinCommand
 public meta import Lean.PrettyPrinter.Delaborator
 import Batteries
 
+-- set_option pp.explicit true
+
+-- run_cmd do
+--   let opts ← Lean.getOptions
+--   Lean.logInfo m!"{(← Lean.Elab.Command.getScopes).length}"
+
 public meta section
 
 
@@ -263,25 +269,41 @@ Okay, so here's what I realized. We should just be maximally reifying. The integ
 public section
 
 -- TODO: prepend `_root_` instead of `@` for copy-paste affordance? Or discourage this to avoid making it easy to "hold it wrong"?
-syntax reifiedExplicitOpenStx := "(" ident " → " ident ")"
-syntax reifiedSimpleOpenStx := &" @" noWs ident (" hiding " ident*)?
-syntax reifiedOpenDecl := reifiedSimpleOpenStx <|> reifiedExplicitOpenStx
-syntax reifiedOpenStx := "open " reifiedOpenDecl*
+syntax reifiedExplicitOpenStx := ident " → " ident
+-- TODO: wrap in parens for `hiding`? only technically unambiguous thanks to `@`.
+syntax reifiedSimpleOpenStx := &"@" noWs ident
+syntax reifiedSimpleOpenHidingStx := &"@" noWs ident " hiding " ident*
+syntax reifiedOpenDecl := ppSpace colGt
+  (reifiedSimpleOpenStx <|> ("(" reifiedSimpleOpenHidingStx <|> reifiedExplicitOpenStx ")"))
+syntax reifiedOpenStx := withPosition("open" reifiedOpenDecl*)
 syntax reifiedVarStx := Parser.Command.variable (ppLine Parser.Command.include)? (ppLine Parser.Command.omit)?
-syntax reifiedOpenScopedDecl := &"@" noWs ident
-syntax reifiedOpenScopedStx := "open" ppSpace "scoped" reifiedOpenScopedDecl*
-syntax reifiedOptionKeyValue := ident ppSpace optionValue
-syntax reifiedSetOptionsStx := "set_options " reifiedOptionKeyValue,*
+syntax reifiedOpenScopedDecl := ppSpace colGt &"@" noWs ident
+syntax reifiedOpenScopedStx := withPosition("open " "scoped" reifiedOpenScopedDecl*)
+syntax reifiedOptionKeyValue := ppSpace colGt ident ppSpace optionValue
+syntax reifiedSetOptionsStx := withPosition("set_options " reifiedOptionKeyValue,*)
 
-syntax scopeStx := Parser.Command.sectionHeader &"scope" ppIndent(
-  (ppLine Parser.Command.universe)?
-  (ppLine Parser.Command.namespace)?
-  (ppLine reifiedOpenStx)?
-  (ppLine reifiedOpenScopedStx)? -- TODO: local?
-  (ppLine reifiedSetOptionsStx)?
-  (ppLine reifiedVarStx)?)
-
-syntax "anonymous " scopeStx ppLine "in " "section" command : command
+/--
+A scope specification of the form
+```
+(@[expose])? (public)? (noncomputable)? (section)? scope
+  (universe ...)?
+  (namespace ...)?
+  (open @id₁ @id₂ ...)?
+  (open scoped @id₁ @id₂ ...)?
+  (set_options key₁ val₁, key₂ val₂ ...)?
+  (variable ...)?
+  (include ...)?
+  (omit ...)?
+```
+Currently, these must appear in order. Notice the differences from typical scope syntax.
+-/
+syntax scopeStx := Parser.Command.sectionHeader &"scope"
+  (ppLine colGt Parser.Command.universe)?
+  (ppLine colGt Parser.Command.namespace)?
+  (ppLine colGt reifiedOpenStx)?
+  (ppLine colGt reifiedOpenScopedStx)? -- TODO: local?
+  (ppLine colGt reifiedSetOptionsStx)?
+  (ppLine colGt reifiedVarStx)?
 
 -- TODO: open scoped, etc.
 
@@ -330,7 +352,7 @@ def reifyOpenDecls {m} [Monad m] [MonadQuotation m] (openDecls : List OpenDecl) 
     | .simple ns except, acc => return acc.push <|←
       if except.isEmpty then `(reifiedOpenDecl| @$(mkIdent ns)) else
         let except := except.toArray.map mkIdent
-        `(reifiedOpenDecl| @$(mkIdent ns) hiding $except*)
+        `(reifiedOpenDecl| (@$(mkIdent ns) hiding $except*))
   if reifiedOpens.isEmpty then return none else
     `(reifiedOpenStx| open $reifiedOpens*)
 
@@ -351,21 +373,24 @@ def Lean.Name.foldrPrefix {α} (n : Name) (init : α) (f : Name → α → α) :
   | .anonymous => val
   | .str pre _ | .num pre _ => pre.foldrPrefix val f
 
-protected def IO.extraScoped (env : Environment) (ns : Name) (openDecls : List OpenDecl) :
-    IO NameSet := do
+-- Looks at the parser extension's scopes. Might want to change this.
+def _root_.Lean.Environment.activeScopes (env : Environment) : NameSet :=
+  match Parser.parserExtension.ext.getState (asyncMode := .local) env |>.stateStack with
+  | s :: _ => s.activeScopes
+  | _ => {}
+
+protected def _root_.Lean.Environment.extraScoped (env : Environment)
+    (ns : Name) (openDecls : List OpenDecl) : NameSet := Id.run do
   let impliedScopes : List Name := openDecls.filterMap fun
     | .simple ns _ => some ns
     | _ => none
   let impliedScopes := ns.foldrPrefix (init := impliedScopes) fun n acc =>
     if n.isAnonymous then acc else acc.insert n
   -- what if we used just e.g. the `parserExtension`? or some other basic scopedEnvExtension? take it out of IO?
-  let some first := (← scopedEnvExtensionsRef.get)[0]? | return {}
-  let s :: _ := first.ext.getState env |>.stateStack | return {}
-  return s.activeScopes.eraseMany impliedScopes -- TODO: make an iterator, this isn't great
-
+  return env.activeScopes.eraseMany impliedScopes -- TODO: make an iterator, this isn't great
 
 def extraScoped : CommandElabM NameSet := do
-  IO.extraScoped (← getEnv) (← getCurrNamespace) (← getScope).openDecls
+  return (← getEnv).extraScoped (← getCurrNamespace) (← getScope).openDecls
 
 def getUniverseStx : CommandElabM (Option <| TSyntax ``Parser.Command.universe) := do
   let levelNames := (← getScope).levelNames
@@ -404,18 +429,23 @@ def reifyScope : CommandElabM (TSyntax ``scopeStx) := do
 
     -- We also could account for `open (scoped) ... in variable` but it would have to be ad-hoc.
 
+-- TODO: it's possible we should register these as namespaces if they are not already namesapces. I forget where that happens.
 def unreifyOpenDecl : TSyntax ``reifiedOpenDecl → CommandElabM OpenDecl
-  | `(reifiedSimpleOpenStx| @$id $[hiding $hidden*]?) => do
-    let except := if let some hidden := hidden then hidden.map (·.getId) |>.toList else []
+  | `(reifiedOpenDecl| @$id) => do
     activateScoped id.getId
-    return .simple id.getId except
-  | `(reifiedExplicitOpenStx| ($id → $decl)) => return .explicit id.getId decl.getId
+    return .simple id.getId []
+  | `(reifiedOpenDecl| (@$id hiding $hidden*)) => do
+    activateScoped id.getId
+    return .simple id.getId <| (hidden.map (·.getId)).toList
+  | `(reifiedOpenDecl| ($id → $decl)) => return .explicit id.getId decl.getId
   | _ => throwUnsupportedSyntax
 
 def unreifyOpenDecls (openDeclsStx : TSyntaxArray ``reifiedOpenDecl) : CommandElabM Unit := do
   let openDecls ← openDeclsStx.foldlM (init := []) fun openDecls openDeclStx =>
     return (← unreifyOpenDecl openDeclStx) :: openDecls
   modifyScope fun s => { s with openDecls }
+
+
 
 -- TODO: constinfo at decls
 def unreifyScopeInBaseScope : TSyntax ``scopeStx → CommandElabM Unit
@@ -460,7 +490,7 @@ def unreifyScopeInBaseScope : TSyntax ``scopeStx → CommandElabM Unit
 
 open Meta.Tactic.TryThis
 
-syntax "show_current " ("scope?" <|> scopeStx) : command
+syntax withPosition("show_current " colGt ("scope?" <|> scopeStx)) : command
 
 elab_rules : command
 | `(show_current scope?%$tk) => do
@@ -475,11 +505,9 @@ universe u
 variable (x : Nat)
 
 show_current public meta scope
-    universe u
-    open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis
-    variable (x : Nat)
-
-syntax "reset_to" ("scope?" <|> scopeStx) : command
+  universe u
+  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis
+  variable (x : Nat)
 
 #check MessageData.signature
 
@@ -565,14 +593,148 @@ def resetScopes : CommandElabM Unit := do
   modify fun s => { s with scopes := s.scopes.dropAllButLast }
   popAllScopes
 
+syntax withPosition("reset_to" ("scope?" <|> scopeStx)) : command
 
 elab_rules : command
 | `(reset_to scope?%$tk) => do
   liftCoreM <| addSuggestion tk <|← reifyScope
 | `(reset_to $reified:scopeStx) => do
-  let
-  liftCoreM <| addSuggestion tk (scopeStx)
+  resetScopes
+  unreifyScopeInBaseScope reified
 
+namespace Foo
+
+def bar := true
+
+-- reset_to public scope
+--   universe u
+--   namespace w
+--   open @Foo
+--   open scoped @Nat
+
+
+#check bar
+
+def d : Type u := ULift Prop
+
+
+open Bool hiding not
+
+
+
+open Lean Elab Command
+
+run_cmd do
+  logInfo m!"{(← getScope).openDecls}"
+
+show_current public scope
+  universe u
+  namespace w
+  open @Foo (@Bool hiding not) @Lean @Lean.Elab @Lean.Elab.Command
+  open scoped @Nat
+
+
+
+/-
+1. integrate <scope>
+
+2. #dependencies: Dependencies should work the following way.
+- We need to treat current dependencies differently. We get the current file dependencies transitively. We stop at the first dependency not in the current module.
+- We collect all the syntax nodekinds, look for originating files.
+- We collect all elaborators from infotrees.
+- We look at the new additions to the extraModUse etc.
+- Future: tweak how it handles visibility
+
+3. widget for going to line number, copying text?
+
+4. extract scopes from below (open in etc.)?
+
+5. file-level scope normalization.
+- What exactly are the rules?
+- How much dynamic trial-and-error do we have to do? `open X` too high can break things.
+
+-/
+  -- Add the relation (e.g. `GE.ge : Set Nat → Set Nat → Prop`) to the hover on the whole term
+
+@[inline]
+def withoutModifyingScopes {α} (x : CommandElabM α) : CommandElabM α := do
+  let savedScopes ← getScopes
+  try x finally modify ({· with scopes := savedScopes })
+
+/-- Gets the topmost scope and current active scopes after unerifying `scopeStx`, without modifying the state. -/
+def observeUnreifiedScopes (scopeStx : TSyntax ``scopeStx) : CommandElabM (Scope × NameSet) :=
+  withoutModifyingScopes <| withoutModifyingEnv do
+    resetScopes
+    unreifyScopeInBaseScope scopeStx
+    return (← getScope, (← getEnv).activeScopes)
+
+structure ScopeDiff where
+  newLevelNames : List Name
+  -- new
+
+-- class HDiff (α) (β) (γ) where
+--   diff : α → β → γ
+
+
+-- export HDiff (diff)
+
+structure Diff (α : Type u) where
+  added : α
+  lost : α
+
+class HasDiffType (α : Type u) where
+  DiffType : Type u
+
+export HasDiffType (DiffType)
+
+-- currently everything diffs via `Diff`
+instance {α} : HasDiffType α := ⟨Diff α⟩
+
+class Diffable (α) [HasDiffType α] where
+  diff : α → α → DiffType α
+
+export Diffable (diff)
+
+-- Hmm, might need to allow more parameters here. HDiff...how to "add them back"...
+
+
+@[specialize f] -- TODO: or inline?
+def Diff.map {α} {β} (f : α → β) : Diff α → Diff β
+  | { added, lost } => { added := f added, lost := f lost }
+
+@[specialize f]
+def Diff.mapM {α} {β} {m} [Monad m] (f : α → m β) : Diff α → m (Diff β)
+  | { added, lost } => return { added := ← f added, lost := ← f lost }
+
+def _root_.List.diffByPrefix {α} [BEq α] : List α → List α → Diff (List α)
+  | n@(nh :: nrest), m@(mh :: mrest) =>
+    if nh == mh then nrest.diffByPrefix mrest else { added := n, lost := m }
+  | n, m => { added := n, lost := m }
+
+def _root_.Name.diff (new minus : Name) : Diff Name :=
+  -- TODO: be better
+  new.components.diffByPrefix minus.components |>.map (·.foldl (init := .anonymous) Name.append)
+
+instance : Diffable Name := ⟨Name.diff⟩
+
+def _root_.List.minus {α} [BEq α] (new minus : List α) : List α :=
+  new.filter (!minus.contains ·)
+
+-- def _root_.List.diff' {α} [BEq α] (new minus : List α) : Diff (List α) :=
+--   { added := new.filter (!minus.contains ·), lost := minus.filter (!new.contains ·) }
+
+
+
+def integrateScopes (scopeStx : TSyntax ``scopeStx) (exact := false) :
+    CommandElabM ScopeDiff := do
+  let (tgtScope, activeScopes) ← observeUnreifiedScopes scopeStx
+  -- Suffix lost and suffix added
+  let namespaceDiff := diff tgtScope.currNamespace (← getCurrNamespace)
+  let openDiff
+
+
+
+-- Next up integrating, or tracing dependencies? Kind of like not just reify scopes, but extract. Hard to tell what matters for tactics and such though.
 
 -- def getOpenDeclSyntax : CommandElabM
 /-
