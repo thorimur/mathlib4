@@ -11,6 +11,12 @@ import Batteries
 --   let opts ← Lean.getOptions
 --   Lean.logInfo m!"{(← Lean.Elab.Command.getScopes).length}"
 
+#check Add
+
+def Add'.{u} (α : Type u) : Type u := sorry
+
+
+
 public meta section
 
 
@@ -69,6 +75,21 @@ open Lean Meta Elab Parser PrettyPrinter Delaborator SubExpr Command
 local instance : Repr Std.Format.FlattenBehavior := ⟨fun _ _ => f!"<flatten>"⟩
 
 deriving instance Repr for Std.Format
+
+instance : Repr Options where
+  reprPrec opts _ := Id.run do
+    let mut f := #[]
+    for (n, v) in opts do
+      unless f.isEmpty do f := f.push f!", "
+      f := f.push f!"({n}, {v})"
+    return .bracket "{ " (f.foldl (init := .nil) (· ++ ·)) " }"
+
+deriving instance Repr for OpenDecl, Scope
+
+/- autocomplete for end? based on variable names would be cool. -/
+
+elab "#scopes" : command => do
+  logInfo m!"{repr <|← getScopes}"
 
 open Term
 def delabToDeclSigWithId (t : Term) (defKind : Bool) :
@@ -304,10 +325,10 @@ inductive MergeResult where
 
 
 -- TODO: combine explicits and such. For now, just ignore preexisting ones.
-def deduplicateOpenDecls (openDecls : List OpenDecl) : Array OpenDecl :=
-  -- Note that the innermost openDecls come first, so we `foldr` to give earlier opens precedence.
-  openDecls.foldr (init := #[]) fun openDecl acc =>
-    if acc.contains openDecl then acc else acc.push openDecl
+def deduplicateOpenDecls (openDecls : List OpenDecl) : List OpenDecl :=
+  -- Note that the innermost openDecls come first and affect name resolution first due to `eraseDups` affecting resolved ids by first occurrence (corresponding to later occurrences in openDecls)
+  -- TODO: find something more efficient, which means basically just about anything else.
+  openDecls.reverse.eraseDups.reverse
 
 /-
 Strategy: elabOpenDecl one by one?
@@ -403,8 +424,9 @@ def unreifySectionHeader (header : TSyntax ``Parser.Command.sectionHeader) : Com
     modifyScope fun s => { s with isPublic, isMeta, isNoncomputable, attrs }
   | _ => throwUnsupportedSyntax
 
-def reifyOpenDecls {m} [Monad m] [MonadQuotation m] (openDecls : List OpenDecl) :
+def reifyOpenDecls {m} [Monad m] [MonadQuotation m] (openDecls : List OpenDecl) (dedup := true) :
     m (Option (TSyntax ``reifiedOpenStx)) := do
+  let openDecls := if dedup then deduplicateOpenDecls openDecls else openDecls
   let reifiedOpens ← openDecls.foldrM (init := #[]) fun
     | .explicit id declName, acc => return acc.push <|←
       `(reifiedOpenDecl| ($(mkIdent id) → $(mkIdent declName)))
@@ -571,7 +593,7 @@ variable (x : Nat)
 
 show_current public meta scope
   universe u
-  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis
+  open @Lean.Meta.Tactic.TryThis @Lean.Elab.Command @Lean.Elab @Lean
   variable (x : Nat)
 
 
@@ -590,23 +612,26 @@ def popAllScopes {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT (ST IO.R
   for ext in ← scopedEnvExtensionsRef.get do
     modifyEnv ext.popAllScopes
 
-def getResetScopes : CommandElabM (List Scope × Environment) := do
+def getRevertAllScopes : CommandElabM (List Scope × Environment) := do
   let savedScopes ← getScopes; let env ← getEnv
   modify fun s => { s with scopes := s.scopes.dropAllButLast }
   popAllScopes
   return (savedScopes, env)
 
-def resetScopes : CommandElabM Unit := do
-  modify fun s => { s with scopes := s.scopes.dropAllButLast }
-  popAllScopes
+def resetScopes (pop := true) : CommandElabM Unit := do
+  modify fun s => Id.run do
+    let some headScope := s.scopes.getLast? | pure s
+    -- TODO: we should read opts from the lakefile somehow
+    { s with scopes := [{ header := headScope.header, opts := headScope.opts }] }
+  if pop then popAllScopes
 
-syntax withPosition("reset_to" ("scope?" <|> scopeStx)) : command
+syntax withPosition("reset_to" ("(" &"pop" " := " &"false" ")")? ("scope?" <|> scopeStx)) : command
 
 elab_rules : command
-| `(reset_to scope?%$tk) => do
+| `(reset_to $[(pop := false)]? scope?%$tk) => do
   liftCoreM <| addSuggestion tk <|← reifyScope
-| `(reset_to $reified:scopeStx) => do
-  resetScopes
+| `(reset_to $[(pop := false%$noPop)]? $reified:scopeStx) => do
+  resetScopes noPop.isNone
   unreifyScopeInBaseScope reified
 
 namespace Foo
@@ -816,14 +841,84 @@ elab_rules : command
       for (_, declId) in declIds do
         logWarningAt declId m!"`#radicalize` could not infer the full declaration name of {declId}."
 
+show_current public meta scope
+  universe v u
+  namespace Foo
+  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis (@Bool hiding not)
+  variable (x : Nat) (stx : Syntax) (n : Nat)
+
+reset_to scope
+
+namespace Fooo
+
+public def a := true
+
+end Fooo
+
+namespace Bar
+
+public def a := false
+
+end Bar
+
+namespace Baz
+
+public def a := false
+
+end Baz
+
+-- reset_to (pop := false) scope
+
+-- #scopes
+
+-- Because Lean
+
+reset_to scope
+
+open Fooo Bar Fooo Baz Bar
+
+show_current scope
+  open @Fooo @Bar @Baz
+
+run_cmd do Lean.logInfo m!"{← Lean.resolveGlobalName `a }"
+
+reset_to scope
+
+open Bar Fooo Baz Fooo Baz Fooo
+
+
+show_current scope
+  open @Bar @Fooo @Baz
+
+run_cmd do Lean.logInfo m!"{← Lean.resolveGlobalName `a }"
+
+reset_to public meta scope
+  universe v u
+  namespace Foo
+  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis (@Bool hiding not) @Lean
+    @Lean.Elab @Lean.Elab @Lean.Elab.Command @Lean.Elab.Command @Lean.Elab.Command
+  variable (x : Nat) (stx : Syntax) (n : Nat)
+
+def dropNamespace (ns : Name) (check := false) : CommandElabM Unit := do
+  if check then
+    unless ns.isSuffixOf (← getCurrNamespace) do
+      throwError "Expected `{ns}` to be a suffix of the current namespace `{← getCurrNamespace}`."
+  modify fun s => { s with scopes := s.scopes.drop ns.getNumParts }
+  for _ in 0...ns.getNumParts do popScope
 
 def integrateScopes (scopeStx : TSyntax ``scopeStx) (exact := false) :
     CommandElabM ScopeDiff := do
   let (tgtScope, activeScopes) ← observeUnreifiedScopes scopeStx
   -- Suffix lost and suffix added
   let namespaceDiff := diff tgtScope.currNamespace (← getCurrNamespace)
-  let openDiff
+  dropNamespace namespaceDiff.lost
+  -- Sadly API is locked behind elab
+  elabNamespace <|← `(namespace $(mkIdent namespaceDiff.added))
 
+  let newLevelNames := tgtScope.levelNames.minus (← getLevelNames)
+
+
+  -- let openDiff
 
 
 -- Next up integrating, or tracing dependencies? Kind of like not just reify scopes, but extract. Hard to tell what matters for tactics and such though.
@@ -958,21 +1053,8 @@ where
 elab tk:"#reprint" ppLine cmd:command : command => do
   liftCoreM <| Meta.Tactic.TryThis.addSuggestion tk cmd
 
-#reprint
-instance : Repr Options where
-  reprPrec opts _ := Id.run do
-    let mut f := #[]
-    for (n, v) in opts do
-      unless f.isEmpty do f := f.push f!", "
-      f := f.push f!"({n}, {v})"
-    return .bracket "{ " (f.foldl (init := .nil) (· ++ ·)) " }"
 
-deriving instance Repr for OpenDecl, Scope
 
-/- autocomplete for end? based on variable names would be cool. -/
-
-elab "#scopes" : command => do
-  logInfo m!"{repr <|← getScopes}"
 
 end
 
