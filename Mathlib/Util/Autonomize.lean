@@ -53,6 +53,65 @@ TODO: notation and syntax that's used, dependencies in the current file, depende
 
 open Lean Elab Command
 
+section defLike
+
+open Lean
+
+syntax defLike := "def_like " term
+syntax theoremLike := "theorem_like " term
+-- syntax instanceLike := "instance_like " ident
+syntax (name := declarationLike) Parser.Command.declModifiersF
+  (defLike <|> theoremLike) : command
+
+-- def suggestDeclWithType (n : Name) : CommandElabM Name := do
+open Lean Meta Elab Parser PrettyPrinter Delaborator SubExpr Command
+
+local instance : Repr Std.Format.FlattenBehavior := ⟨fun _ _ => f!"<flatten>"⟩
+
+deriving instance Repr for Std.Format
+
+open Term
+def delabToDeclSigWithId (t : Term) (defKind : Bool) :
+    TermElabM (TSyntax ``declId × TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
+  let (type, levelParams, newName) ← do
+    if let `(term|$id:ident) := t then
+      let n ← resolveGlobalConstNoOverload id
+      let info ← getConstInfo n
+      pure (info.type, info.levelParams, id.getId.appendAfter "'")
+    else
+      let e ← elabTerm t none
+      synthesizeSyntheticMVarsNoPostponing
+      let type ← inferType e
+      pure (type, [], `foo)
+  -- TODO: could use the infos for hovers here
+  let (sig, _) ← delabCore type (delab := delabForallParamsWithSignature fun groups type => do
+    show DelabM <| TSyntax (if defKind then ``optDeclSig else ``declSig) from do
+      if h : defKind then
+        let stx ← `(optDeclSig| $groups* : $type)
+        pure <| by simp only [h]; exact stx
+      else
+        let stx ← `(declSig| $groups* : $type)
+        pure <| by simp only [h]; exact stx)
+  let id ← if levelParams.isEmpty then
+      `(declId| $(mkIdent newName))
+    else
+      `(declId| $(mkIdent newName).{$(levelParams.toArray.map Lean.mkIdent),*})
+  return (id, sig)
+
+open Meta.Tactic.TryThis in
+elab_rules : command
+| `(declarationLike| $_ $d:defLike) => liftTermElabM do
+  let `(defLike| def_like $t:term) := d | throwUnsupportedSyntax
+  let (id, sig) ← delabToDeclSigWithId t true
+  let declStx ← `(declaration| def $id:declId $sig:optDeclSig := sorry)
+  addSuggestion d declStx
+| `(declarationLike| $_ $d:theoremLike) => liftTermElabM do
+  let `(theoremLike| theorem_like $t:term) := d | throwUnsupportedSyntax
+  let (id, sig) ← delabToDeclSigWithId t false
+  let declStx ← `(declaration| theorem $id:declId $sig:declSig := sorry)
+  addSuggestion d declStx
+
+end defLike
 
 namespace Lean.Elab.Command
 
@@ -275,12 +334,12 @@ syntax reifiedSimpleOpenStx := &"@" noWs ident
 syntax reifiedSimpleOpenHidingStx := &"@" noWs ident " hiding " ident*
 syntax reifiedOpenDecl := ppSpace colGt
   (reifiedSimpleOpenStx <|> ("(" reifiedSimpleOpenHidingStx <|> reifiedExplicitOpenStx ")"))
-syntax reifiedOpenStx := withPosition("open" reifiedOpenDecl*)
+syntax reifiedOpenStx := withPosition("open" ppIndent(reifiedOpenDecl*))
 syntax reifiedVarStx := Parser.Command.variable (ppLine Parser.Command.include)? (ppLine Parser.Command.omit)?
 syntax reifiedOpenScopedDecl := ppSpace colGt &"@" noWs ident
-syntax reifiedOpenScopedStx := withPosition("open " "scoped" reifiedOpenScopedDecl*)
+syntax reifiedOpenScopedStx := withPosition("open " "scoped" ppIndent(reifiedOpenScopedDecl*))
 syntax reifiedOptionKeyValue := ppSpace colGt ident ppSpace optionValue
-syntax reifiedSetOptionsStx := withPosition("set_options " reifiedOptionKeyValue,*)
+syntax reifiedSetOptionsStx := withPosition("set_options " ppIndent(reifiedOptionKeyValue,*))
 
 /--
 A scope specification of the form
@@ -430,22 +489,28 @@ def reifyScope : CommandElabM (TSyntax ``scopeStx) := do
     -- We also could account for `open (scoped) ... in variable` but it would have to be ad-hoc.
 
 -- TODO: it's possible we should register these as namespaces if they are not already namesapces. I forget where that happens.
-def unreifyOpenDecl : TSyntax ``reifiedOpenDecl → CommandElabM OpenDecl
+def unreifyOpenDecl (openDecl : TSyntax ``reifiedOpenDecl) (activateScopes := true) :
+    CommandElabM OpenDecl :=
+  match openDecl with
   | `(reifiedOpenDecl| @$id) => do
-    activateScoped id.getId
+    if activateScopes then activateScoped id.getId
     return .simple id.getId []
   | `(reifiedOpenDecl| (@$id hiding $hidden*)) => do
-    activateScoped id.getId
+    if activateScopes then activateScoped id.getId
     return .simple id.getId <| (hidden.map (·.getId)).toList
   | `(reifiedOpenDecl| ($id → $decl)) => return .explicit id.getId decl.getId
   | _ => throwUnsupportedSyntax
+
+def _root_.Lean.OpenDecl.activate {m : Type → Type}
+    [Monad m] [MonadEnv m] [MonadLiftT (ST IO.RealWorld) m] :
+    OpenDecl → m Unit
+  | .simple ns _  => activateScoped ns
+  | .explicit _ _ => pure ()
 
 def unreifyOpenDecls (openDeclsStx : TSyntaxArray ``reifiedOpenDecl) : CommandElabM Unit := do
   let openDecls ← openDeclsStx.foldlM (init := []) fun openDecls openDeclStx =>
     return (← unreifyOpenDecl openDeclStx) :: openDecls
   modifyScope fun s => { s with openDecls }
-
-
 
 -- TODO: constinfo at decls
 def unreifyScopeInBaseScope : TSyntax ``scopeStx → CommandElabM Unit
@@ -509,65 +574,7 @@ show_current public meta scope
   open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis
   variable (x : Nat)
 
-#check MessageData.signature
 
-open Lean
-#check Parser.Command.declaration
-syntax defLike := "def_like " term
-syntax theoremLike := "theorem_like " term
--- syntax instanceLike := "instance_like " ident
-syntax (name := declarationLike) Parser.Command.declModifiersF
-  (defLike <|> theoremLike) : command
-
--- def suggestDeclWithType (n : Name) : CommandElabM Name := do
-
-
-open Lean Meta Elab Parser PrettyPrinter Delaborator SubExpr Command
-
-instance : Repr Std.Format.FlattenBehavior := ⟨fun _ _ => f!"<flatten>"⟩
-
-deriving instance Repr for Std.Format
-
-open Term
-def delabToDeclSigWithId (t : Term) (defKind : Bool) :
-    TermElabM (TSyntax ``declId × TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
-  let (type, levelParams, newName) ← do
-    if let `(term|$id:ident) := t then
-      let n ← resolveGlobalConstNoOverload id
-      let info ← getConstInfo n
-      pure (info.type, info.levelParams, id.getId.appendAfter "'")
-    else
-      let e ← elabTerm t none
-      synthesizeSyntheticMVarsNoPostponing
-      let type ← inferType e
-      pure (type, [], `foo)
-  -- TODO: could use the infos for hovers here
-  let (sig, _) ← delabCore type (delab := delabForallParamsWithSignature fun groups type => do
-    show DelabM <| TSyntax (if defKind then ``optDeclSig else ``declSig) from do
-      if h : defKind then
-        let stx ← `(optDeclSig| $groups* : $type)
-        pure <| by simp only [h]; exact stx
-      else
-        let stx ← `(declSig| $groups* : $type)
-        pure <| by simp only [h]; exact stx)
-  let id ← if levelParams.isEmpty then
-      `(declId| $(mkIdent newName))
-    else
-      `(declId| $(mkIdent newName).{$(levelParams.toArray.map Lean.mkIdent),*})
-  return (id, sig)
-
-
-elab_rules : command
-| `(declarationLike| $_ $d:defLike) => liftTermElabM do
-  let `(defLike| def_like $t:term) := d | throwUnsupportedSyntax
-  let (id, sig) ← delabToDeclSigWithId t true
-  let declStx ← `(declaration| def $id:declId $sig:optDeclSig := sorry)
-  addSuggestion d declStx
-| `(declarationLike| $_ $d:theoremLike) => liftTermElabM do
-  let `(theoremLike| theorem_like $t:term) := d | throwUnsupportedSyntax
-  let (id, sig) ← delabToDeclSigWithId t false
-  let declStx ← `(declaration| theorem $id:declId $sig:declSig := sorry)
-  addSuggestion d declStx
 
 #check List.dropAllButLast
 
@@ -613,8 +620,6 @@ def bar := true
 --   open scoped @Nat
 
 
-#check bar
-
 def d : Type u := ULift Prop
 
 
@@ -624,14 +629,12 @@ open Bool hiding not
 
 open Lean Elab Command
 
-run_cmd do
-  logInfo m!"{(← getScope).openDecls}"
-
-show_current public scope
+show_current public meta scope
   universe u
-  namespace w
-  open @Foo (@Bool hiding not) @Lean @Lean.Elab @Lean.Elab.Command
-  open scoped @Nat
+  namespace Foo
+  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis (@Bool hiding not) @Lean
+    @Lean.Elab @Lean.Elab @Lean.Elab.Command @Lean.Elab.Command @Lean.Elab.Command
+  variable (x : Nat)
 
 
 
@@ -723,7 +726,27 @@ def _root_.List.minus {α} [BEq α] (new minus : List α) : List α :=
 -- def _root_.List.diff' {α} [BEq α] (new minus : List α) : Diff (List α) :=
 --   { added := new.filter (!minus.contains ·), lost := minus.filter (!new.contains ·) }
 
+#check unreifyOpenDecls
 
+-- Strategy: have a certain effect, but report discrepancies.
+
+universe v
+
+syntax "#radicalize" ppLine command : command
+
+elab_rules : command
+| `(#radicalize $cmd:command) => do
+  let mut declIds := #[]
+  for stx in cmd.raw.topDown do
+    if stx.isOfKind ``Parser.Command.declId then declIds := declIds.push stx
+  elabCommand cmd
+  let
+
+run_cmd do
+  let id ← `(declId| foo.{i})
+  logInfo m!"{(← liftTermElabM <| expandDeclId (← getCurrNamespace) (← getLevelNames) id {}).declName}"
+
+#check expandDecl
 
 def integrateScopes (scopeStx : TSyntax ``scopeStx) (exact := false) :
     CommandElabM ScopeDiff := do
