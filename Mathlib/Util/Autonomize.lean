@@ -4,6 +4,7 @@ public import Lean
 public meta import Lean.Elab.BuiltinCommand
 public meta import Lean.PrettyPrinter.Delaborator
 import Batteries
+public meta import Mathlib.Lean.Elab.InfoTree
 
 -- set_option pp.explicit true
 
@@ -113,6 +114,10 @@ def delabToDeclSigWithId (t : Term) (defKind : Bool) :
       else
         let stx ← `(declSig| $groups* : $type)
         pure <| by simp only [h]; exact stx)
+  -- TODO: instantiate the names with the current ones in the type, first?
+  -- TODO: only filter them out if they preserve order?
+  let currLevelParams ← getLevelNames
+  let levelParams := levelParams.filter (!currLevelParams.contains ·)
   let id ← if levelParams.isEmpty then
       `(declId| $(mkIdent newName))
     else
@@ -355,9 +360,9 @@ syntax reifiedSimpleOpenStx := &"@" noWs ident
 syntax reifiedSimpleOpenHidingStx := &"@" noWs ident " hiding " ident*
 syntax reifiedOpenDecl := ppSpace colGt
   (reifiedSimpleOpenStx <|> ("(" reifiedSimpleOpenHidingStx <|> reifiedExplicitOpenStx ")"))
-syntax reifiedOpenStx := withPosition("open" ppIndent(reifiedOpenDecl*))
+syntax reifiedOpenStx := withPosition(atomic("open" notFollowedBy("scoped")) ppIndent(reifiedOpenDecl*))
 syntax reifiedVarStx := Parser.Command.variable (ppLine Parser.Command.include)? (ppLine Parser.Command.omit)?
-syntax reifiedOpenScopedDecl := ppSpace colGt &"@" noWs ident
+syntax reifiedOpenScopedDecl := ppSpace colGt "@" noWs ident
 syntax reifiedOpenScopedStx := withPosition("open " "scoped" ppIndent(reifiedOpenScopedDecl*))
 syntax reifiedOptionKeyValue := ppSpace colGt ident ppSpace optionValue
 syntax reifiedSetOptionsStx := withPosition("set_options " ppIndent(reifiedOptionKeyValue,*))
@@ -380,7 +385,7 @@ Currently, these must appear in order. Notice the differences from typical scope
 syntax scopeStx := Parser.Command.sectionHeader &"scope"
   (ppLine colGt Parser.Command.universe)?
   (ppLine colGt Parser.Command.namespace)?
-  (ppLine colGt reifiedOpenStx)?
+  atomic((ppLine colGt reifiedOpenStx)?)
   (ppLine colGt reifiedOpenScopedStx)? -- TODO: local?
   (ppLine colGt reifiedSetOptionsStx)?
   (ppLine colGt reifiedVarStx)?
@@ -453,6 +458,36 @@ def Lean.Name.foldrPrefix {α} (n : Name) (init : α) (f : Name → α → α) :
   match n with
   | .anonymous => val
   | .str pre _ | .num pre _ => pre.foldrPrefix val f
+
+def Lean.Name.foldrSuffixAux {α} (n : Name) (init : α) (f : Name → α → α) (acc : Name) :=
+  match n with
+  | .anonymous => init
+  | .str pre suf =>
+    let acc := (Name.str .anonymous suf ++ acc)
+    pre.foldrSuffixAux (init := f acc init) f acc
+  | .num pre suf =>
+    let acc := (Name.num .anonymous suf ++ acc)
+    pre.foldrSuffixAux (init := f acc init) f acc
+
+
+-- TODO: need to pretty print with respect to namespacing, not open-resolution? do we need unresolveName? I mean, we may as well preserve namespacing, right?
+def_like Name.foldrPrefix
+
+def Lean.Name.foldrSuffix {α} (n : Name) (init : α) (f : Name → α → α) : α :=
+  n.foldrSuffixAux init f .anonymous
+
+def Lean.Name.foldrSuffixAuxM {α} {m} [Monad m] (n : Name) (init : α) (f : Name → α → m α) (acc : Name) : m α :=
+  match n with
+  | .anonymous => pure init
+  | .str pre suf => do
+    let acc := (Name.str .anonymous suf ++ acc)
+    pre.foldrSuffixAuxM (init := ← f acc init) f acc
+  | .num pre suf => do
+    let acc := (Name.num .anonymous suf ++ acc)
+    pre.foldrSuffixAuxM (init := ← f acc init) f acc
+
+def Lean.Name.foldrSuffixM {α} {m} [Monad m] (n : Name) (init : α) (f : Name → α → m α) : m α :=
+  n.foldrSuffixAuxM init f .anonymous
 
 -- Looks at the parser extension's scopes. Might want to change this.
 def _root_.Lean.Environment.activeScopes (env : Environment) : NameSet :=
@@ -593,9 +628,11 @@ variable (x : Nat)
 
 show_current public meta scope
   universe u
-  open @Lean.Meta.Tactic.TryThis @Lean.Elab.Command @Lean.Elab @Lean
+  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis
   variable (x : Nat)
 
+run_cmd do
+  let getExtraModUses
 
 
 #check List.dropAllButLast
@@ -607,10 +644,24 @@ def _root_.Lean.ScopedEnvExtension.popAllScopes {α β σ} (ext : ScopedEnvExten
     | stack@(_ :: _ :: _) => { s with stateStack := stack.dropAllButLast }
     | _ => s
 
-def popAllScopes {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT (ST IO.RealWorld) m] :
-    m Unit :=
+#check ImportM
+
+#check activateScoped
+
+#check PersistentEnvExtensionDescr
+
+def popAllScopes {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT (ST IO.RealWorld) m] : m Unit :=
   for ext in ← scopedEnvExtensionsRef.get do
-    modifyEnv ext.popAllScopes
+    modifyEnv ext.popAllScopes -- Base scope may still be modified
+
+-- TODO(LOSS): Environment extensions don't have a notion of reverting a piece `β` of the state. Activating a scope adds a `β` attached to that name from the `scopedEntries`. We can therefore find out the `β`, but we can't undo them, and we can't tell if other things in the file may have added the same `β` idempotently.
+def resetScopedEnvExtensions {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT (ST IO.RealWorld) m] [MonadLiftT IO m] (opts : Options) : m Unit := do
+  for ext in ← scopedEnvExtensionsRef.get do
+    let env ← getEnv
+    let initσ ← ReaderT.run (m := IO) (r := { env, opts }) <|
+      ext.ext.addImportedFn (ext.ext.toEnvExtension.getState env .sync).importedEntries
+    modifyEnv fun env => ext.ext.setState env initσ
+
 
 def getRevertAllScopes : CommandElabM (List Scope × Environment) := do
   let savedScopes ← getScopes; let env ← getEnv
@@ -618,20 +669,25 @@ def getRevertAllScopes : CommandElabM (List Scope × Environment) := do
   popAllScopes
   return (savedScopes, env)
 
-def resetScopes (pop := true) : CommandElabM Unit := do
+def resetScopes (fullResetEnvExtensions := true) : CommandElabM Unit := do
   modify fun s => Id.run do
     let some headScope := s.scopes.getLast? | pure s
-    -- TODO: we should read opts from the lakefile somehow
+    -- TODO(LOSS): we should read opts from the lakefile somehow
     { s with scopes := [{ header := headScope.header, opts := headScope.opts }] }
-  if pop then popAllScopes
+  if fullResetEnvExtensions then resetScopedEnvExtensions (← getOptions) else popAllScopes
 
-syntax withPosition("reset_to" ("(" &"pop" " := " &"false" ")")? ("scope?" <|> scopeStx)) : command
+syntax withPosition("reset_to" (&"!")? ("scope?" <|> scopeStx)) : command
+syntax withPosition("reset_to!")? ("scope?" <|> scopeStx) : command
+
+macro_rules
+| `(reset_to!%$tk scope?%$scope?Tk) => `(reset_to%$tk !%$tk scope?%$scope?Tk)
+| `(reset_to!%$tk $reified:scopeStx) => `(reset_to%$tk !%$tk $reified)
 
 elab_rules : command
-| `(reset_to $[(pop := false)]? scope?%$tk) => do
+| `(reset_to$[!%$tk]? scope?%$tk) => do
   liftCoreM <| addSuggestion tk <|← reifyScope
-| `(reset_to $[(pop := false%$noPop)]? $reified:scopeStx) => do
-  resetScopes noPop.isNone
+| `(reset_to$[!%$tk]? $reified:scopeStx) => do
+  resetScopes tk.isSome
   unreifyScopeInBaseScope reified
 
 namespace Foo
@@ -757,7 +813,7 @@ def _root_.List.minus {α} [BEq α] (new minus : List α) : List α :=
 
 universe v
 
-syntax "#radicalize" ppLine command : command
+
 
 /-- Reversed list of indices. Good for traversing. We assume indexing is fine. -/
 abbrev SyntaxIndex := List Nat
@@ -798,6 +854,8 @@ partial instance {m} [Monad m] : ForIn m TopDownWithIndex (Syntax × SyntaxIndex
     match (← @loop stx [] init ⟨init⟩) with
     | ForInStep.yield b => return b
     | ForInStep.done b  => return b
+
+syntax "#radicalize" ppLine command : command
 
 elab_rules : command
 | `(#radicalize%$tk $cmd:command) => do
@@ -841,6 +899,57 @@ elab_rules : command
       for (_, declId) in declIds do
         logWarningAt declId m!"`#radicalize` could not infer the full declaration name of {declId}."
 
+syntax "#extract_universes" ppLine command : command
+
+-- def getSourceOf! (stx : Syntax.Range) (map : FileMap) : String.Slice :=
+--   map.source.slice! (map.source.pos! stx.start) (map.source.pos! stx.stop)
+
+def multiEditedString (map )
+
+-- thought: should have an aggregated suggestion at the top, then all other suggestions inline.
+-- `universe` gets inserted above. `#extract_universes` gets deleted at same time. aggregating changes should work for `#radicalize` as well.
+-- elab_rules : command
+-- | `(#extract_universes%$tk $cmd:command) => do
+  -- let mut declIds := #[]
+  -- let mut quickPosCheck := #[]
+  -- let map ← getFileMap
+  -- for stx in cmd.raw.topDown do
+  --   let `(declId| $id.{$u,*}) := stx | continue
+  --   let some range := id.raw.getRange? | continue
+  --     declIds := declIds.push (range, stx[0])
+  --     quickPosCheck := quickPosCheck.push <| map.toPosition range.start
+  -- elabCommand cmd
+  -- if declIds.isEmpty then
+  --   let toDelete := tk.getPos?.bind fun pos₁ => cmd.raw.getPos?.map fun pos₂ =>
+  --     Syntax.ofRange ⟨pos₁, pos₂⟩
+  --   liftCoreM <| addSuggestion tk ""
+  --     (origSpan? := toDelete)
+  --     (header := "No declaration names to replace; `#radicalize` may be removed.")
+  --     (diffGranularity := .word)
+  --     (codeActionPrefix? := "Delete #radicalize")
+  -- else
+  --   declIds := declIds.qsort (·.1.1 < ·.1.1)
+  --   let mut loggedOnRadicalizeAlready := false
+  --   for (n, { selectionRange .. }) in declRangeExt.getState (← getEnv) (asyncMode := .sync) do
+  --     let sPos := selectionRange.pos
+  --     if quickPosCheck.any (· = selectionRange.pos) then
+  --       let range : Syntax.Range :=
+  --         ⟨map.ofPosition selectionRange.pos, map.ofPosition selectionRange.endPos⟩
+  --       -- TODO: is there a findErase?
+  --       let some idx := declIds.findFinIdx? (·.1 == range) | continue
+  --       let (_, declId) := declIds[idx]
+  --       declIds := declIds.eraseIdx idx
+  --       let n := privateToUserName n
+  --       if (idx : Nat) = 0 then
+  --         -- Also log it on the token for convenience.
+  --         liftCoreM <| addSuggestion tk (origSpan? := declId) (toString <| rootNamespace ++ n)
+  --         loggedOnRadicalizeAlready := true
+  --       liftCoreM <| addSuggestion declId (toString <| rootNamespace ++ n)
+  --   unless declIds.isEmpty do
+  --     for (_, declId) in declIds do
+  --       logWarningAt declId m!"`#radicalize` could not infer the full declaration name of {declId}."
+
+
 show_current public meta scope
   universe v u
   namespace Foo
@@ -880,12 +989,11 @@ open Fooo Bar Fooo Baz Bar
 show_current scope
   open @Fooo @Bar @Baz
 
-run_cmd do Lean.logInfo m!"{← Lean.resolveGlobalName `a }"
+run_cmd do Lean.logInfo m!"{← Lean.resolveGlobalName `a}"
 
 reset_to scope
 
 open Bar Fooo Baz Fooo Baz Fooo
-
 
 show_current scope
   open @Bar @Fooo @Baz
@@ -906,6 +1014,8 @@ def dropNamespace (ns : Name) (check := false) : CommandElabM Unit := do
   modify fun s => { s with scopes := s.scopes.drop ns.getNumParts }
   for _ in 0...ns.getNumParts do popScope
 
+deriving instance Hashable for OpenDecl
+
 def integrateScopes (scopeStx : TSyntax ``scopeStx) (exact := false) :
     CommandElabM ScopeDiff := do
   let (tgtScope, activeScopes) ← observeUnreifiedScopes scopeStx
@@ -914,6 +1024,26 @@ def integrateScopes (scopeStx : TSyntax ``scopeStx) (exact := false) :
   dropNamespace namespaceDiff.lost
   -- Sadly API is locked behind elab
   elabNamespace <|← `(namespace $(mkIdent namespaceDiff.added))
+  let mut created : Std.HashSet OpenDecl :=
+    (← getOpenDecls).foldl (init := {}) fun acc openDecl => acc.insert openDecl
+  let desired  : Std.HashSet OpenDecl :=
+    tgtScope.openDecls.foldl (init := created) fun acc openDecl => acc.insert openDecl
+  let mut identsToOpen : Array Name := #[]
+  for o in tgtScope.openDecls.reverse do
+    if created.contains o then continue
+    match o with
+    | .simple ns [] => do
+      -- hmm, we really actually need `for n in ns.suffixes (fromEnd := true) do`
+      (identsToOpen, created) ← ns.foldrSuffixM (init := (identsToOpen, created))
+        fun suff (idents, created) => do
+          -- TODO: ensure that we get `ns` itself
+          let mut
+          for ns in ← resolveNamespace suff do
+            unless desired.contains (.simple ns []) do return (identsToOpen, created)
+
+
+
+    | _ => continue -- TODO
 
   let newLevelNames := tgtScope.levelNames.minus (← getLevelNames)
 
@@ -951,14 +1081,9 @@ Actually, would be great to *see* this instead. And drag little things around, m
 I'm now imagining a language in which this sort of change-such-that is first class. Everything is bidirectional, everything has a derivative, or some 2-categorical equipment that lets us say "find the thing which would create this thing..."
 -/
 
-#check Nat
-
--- Why doesn't regular `Nat` show up, and why does `Lean.Nat` show up twice? Scoping activated by `namespace`?
-open Nat hiding add
 
 
 
-def reifyScopeAux (acc : ReifiedScopeData)
 
 
 
@@ -1018,7 +1143,178 @@ For copy-pasting ease we do actually want root when possible, not just `end_all`
 e
 
 -/
-meta section
+#check InfoTree.findSome?
+
+partial def InfoTree.findInfo? (p : Info → Bool) (t : InfoTree) : Option Info :=
+  match t with
+  | context _ t => findInfo? p t
+  | node i ts   =>
+    if p i then
+      some i
+    else
+      ts.findSome? (findInfo? p)
+  | _ => none
+
+@[command_code_action Parser.Command.check]
+def checkToNewDecl : CodeAction.CommandCodeAction := fun _ snap ctx tree => do
+  let .node (.ofCommandInfo info) _ := tree | return #[]
+  match info.stx with
+  | `(#check $id:ident) => do
+    let some idRange := id.raw.getRange? | return #[]
+    let cinfo := tree.findSomeM? (ctx? := ctx) fun
+      | ctx, .ofTermInfo i, ch => do
+        if i.stx.getRange?.isEqSome idRange then
+          let e ← i.runMetaM ctx do
+            let
+      | _, _, _ => false
+
+  return #[{ eager := { title := s!"{info.stx}"}, lazy? := sorry }]
+
+#check checkToNewDecl
+
+set_option pp.explicit true in
+#check 4
+
+reset_to scope
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+open Lean
+
+namespace Foo.Bar.Baz
+
+open Nat
+
+universe u
+
+set_option pp.explicit true
+set_option pp.instances true
+
+
+
+show_current scope
+  universe u
+  namespace Foo.Bar.Baz
+  open @Lean @Nat @Lean.Nat
+  open scoped @Bar @Baz @Fooo
+  set_options pp.instances true, pp.explicit true
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #check expandDeclId
 
