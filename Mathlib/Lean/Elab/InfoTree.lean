@@ -57,6 +57,7 @@ provided via the `ctx?` argument if invoking `findSomeM?` during a larger traver
 infotree. A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus
 likely to cause `findSomeM?` to always return `none`.
 -/
+@[specialize f]
 partial def findSomeM? {m : Type → Type} [Monad m] {α}
     (f : ContextInfo → Info → PersistentArray InfoTree → m (Option α))
     (t : InfoTree) (ctx? : Option ContextInfo := none) : m (Option α) :=
@@ -83,7 +84,7 @@ provided via the `ctx?` argument if invoking `findSome?` during a larger travers
 A failure to provide `ctx? := some ctx` when `t` is not the outermost `InfoTree` is thus likely to
 cause `findSome?` to always return `none`.
 -/
-def findSome? {α} (f : ContextInfo → Info → PersistentArray InfoTree → Option α)
+@[inline] def findSome? {α} (f : ContextInfo → Info → PersistentArray InfoTree → Option α)
     (t : InfoTree) (ctx? : Option ContextInfo := none) : Option α :=
   Id.run <| t.findSomeM? f ctx?
 
@@ -95,7 +96,7 @@ If `ctx?` is `some ctx`, `ctx` is used as an initial context. A `ctx?` of `none`
 used when operating on the first node of the entire infotree. Otherwise, it is likely that no
 context will be found.
 -/
-def onHighestNode? {α} (t : InfoTree) (ctx? : Option ContextInfo)
+@[inline] def onHighestNode? {α} (t : InfoTree) (ctx? : Option ContextInfo)
     (f : ContextInfo → Info → PersistentArray InfoTree → α) : Option α :=
   t.findSome? (ctx? := ctx?) fun ctx i ch => some (f ctx i ch)
 
@@ -124,7 +125,7 @@ Get the declarations elaborated in the infotree `t` which are theorems according
 environment. This includes e.g. `instance`s of `Prop` classes in addition to declarations declared
 using the keyword `theorem` directly.
 -/
-def getTheorems (t : InfoTree) (env : Environment) : List ConstantVal :=
+@[inline] def getTheorems (t : InfoTree) (env : Environment) : List ConstantVal :=
   t.getDeclsByBody.filterMap env.findTheoremConstVal?
 
 end Lean.Elab.InfoTree
