@@ -85,26 +85,30 @@ instance : Repr Options where
       f := f.push f!"({n}, {v})"
     return .bracket "{ " (f.foldl (init := .nil) (· ++ ·)) " }"
 
-deriving instance Repr for OpenDecl, Scope
-
 /- autocomplete for end? based on variable names would be cool. -/
+
+deriving instance Repr for OpenDecl, Scope
 
 elab "#scopes" : command => do
   logInfo m!"{repr <|← getScopes}"
 
+
 open Term
-def delabToDeclSigWithId (t : Term) (defKind : Bool) :
-    TermElabM (TSyntax ``declId × TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
-  let (type, levelParams, newName) ← do
-    if let `(term|$id:ident) := t then
-      let n ← resolveGlobalConstNoOverload id
-      let info ← getConstInfo n
-      pure (info.type, info.levelParams, id.getId.appendAfter "'")
-    else
-      let e ← elabTerm t none
-      synthesizeSyntheticMVarsNoPostponing
-      let type ← inferType e
-      pure (type, [], `foo)
+
+def getTypeAndNewName (t : Term) : TermElabM (Expr × List Name × Name) := do
+  if let `(term|$id:ident) := t then
+    let n ← resolveGlobalConstNoOverload id
+    let info ← getConstInfo n
+    pure (info.type, info.levelParams, id.getId.appendAfter "'")
+  else
+    let e ← elabTerm t none
+    synthesizeSyntheticMVarsNoPostponing
+    let type ← inferType e
+    pure (type, [], `foo)
+
+def delabToDeclSigWithId (type : Expr) (levelNames currLevelNames : List Name)
+    (newName : Name) (defKind : Bool) :
+    MetaM (TSyntax ``declId × TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
   -- TODO: could use the infos for hovers here
   let (sig, _) ← delabCore type (delab := delabForallParamsWithSignature fun groups type => do
     show DelabM <| TSyntax (if defKind then ``optDeclSig else ``declSig) from do
@@ -116,24 +120,28 @@ def delabToDeclSigWithId (t : Term) (defKind : Bool) :
         pure <| by simp only [h]; exact stx)
   -- TODO: instantiate the names with the current ones in the type, first?
   -- TODO: only filter them out if they preserve order?
-  let currLevelParams ← getLevelNames
-  let levelParams := levelParams.filter (!currLevelParams.contains ·)
-  let id ← if levelParams.isEmpty then
+  let levelNames := levelNames.filter (!currLevelNames.contains ·)
+  let id ← if levelNames.isEmpty then
       `(declId| $(mkIdent newName))
     else
-      `(declId| $(mkIdent newName).{$(levelParams.toArray.map Lean.mkIdent),*})
+      `(declId| $(mkIdent newName).{$(levelNames.toArray.map Lean.mkIdent),*})
   return (id, sig)
+
+def delabToDeclSigWithIdTerm (t : Term) (defKind : Bool) :
+    TermElabM (TSyntax ``declId × TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
+  let (type, levelNames, newName) ← getTypeAndNewName t
+  delabToDeclSigWithId type levelNames (← getLevelNames) newName defKind
 
 open Meta.Tactic.TryThis in
 elab_rules : command
 | `(declarationLike| $_ $d:defLike) => liftTermElabM do
   let `(defLike| def_like $t:term) := d | throwUnsupportedSyntax
-  let (id, sig) ← delabToDeclSigWithId t true
+  let (id, sig) ← delabToDeclSigWithIdTerm t true
   let declStx ← `(declaration| def $id:declId $sig:optDeclSig := sorry)
   addSuggestion d declStx
 | `(declarationLike| $_ $d:theoremLike) => liftTermElabM do
   let `(theoremLike| theorem_like $t:term) := d | throwUnsupportedSyntax
-  let (id, sig) ← delabToDeclSigWithId t false
+  let (id, sig) ← delabToDeclSigWithIdTerm t false
   let declStx ← `(declaration| theorem $id:declId $sig:declSig := sorry)
   addSuggestion d declStx
 
@@ -236,7 +244,9 @@ def unzipScope? : ScopeZipperCommandElabM (Option Scope) := do
     modifyThe PoppedRevScopes (scope :: ·)
     return scope
 
-#check Scope
+
+
+
 def zipScope? : ScopeZipperCommandElabM (Option Scope) := do
   let scope :: scopes ← getThe PoppedRevScopes | return none
 
@@ -489,21 +499,45 @@ def Lean.Name.foldrSuffixAuxM {α} {m} [Monad m] (n : Name) (init : α) (f : Nam
 def Lean.Name.foldrSuffixM {α} {m} [Monad m] (n : Name) (init : α) (f : Name → α → m α) : m α :=
   n.foldrSuffixAuxM init f .anonymous
 
+/-- An extension we can trust to always be present, whose active scopes reflect the result of `open`s. -/
+def scopeTestExt := Parser.parserExtension.ext
+
 -- Looks at the parser extension's scopes. Might want to change this.
 def _root_.Lean.Environment.activeScopes (env : Environment) : NameSet :=
-  match Parser.parserExtension.ext.getState (asyncMode := .local) env |>.stateStack with
+  match scopeTestExt.getState (asyncMode := .local) env |>.stateStack with
   | s :: _ => s.activeScopes
   | _ => {}
 
+@[inline] def _root_.Lean.NameSet.minus (current minus : NameSet) : NameSet := Id.run do
+  if minus.isEmpty then current else current.filter (!minus.contains ·)
+
+def _root_.Lean.Environment.unusualActiveScopes (env : Environment)
+    (asyncMode := EnvExtension.AsyncMode.local) :
+    IO (List <|
+      NameSet × ScopedEnvExtension EnvExtensionEntry EnvExtensionEntry EnvExtensionState) := do
+  let sampledScopes := env.activeScopes
+  let mut exts := []
+  for ext in ← scopedEnvExtensionsRef.get do
+    match ext.ext.getState env asyncMode |>.stateStack with
+    | { activeScopes .. } :: _ =>
+      let extra := activeScopes.minus sampledScopes
+      unless extra.isEmpty do
+        exts := (extra, ext) :: exts
+    | _ => pure ()
+  return exts
+
+/-- Gets the activated scopes in a (standard) scoped env extension that are *not* implied by the current namespace and open decls. I.e., the extra `open scoped` that exist somewhere. -/
 protected def _root_.Lean.Environment.extraScoped (env : Environment)
-    (ns : Name) (openDecls : List OpenDecl) : NameSet := Id.run do
-  let impliedScopes : List Name := openDecls.filterMap fun
-    | .simple ns _ => some ns
-    | _ => none
-  let impliedScopes := ns.foldrPrefix (init := impliedScopes) fun n acc =>
+    (currNamespace : Name) (openDecls : List OpenDecl) : NameSet := Id.run do
+  -- Note that each `open` that adds `.simple` activates the corresponding scopes.
+  let impliedScopes : NameSet := openDecls.foldl (init := {}) fun
+    | acc, .simple ns _ => if ns.isAnonymous then acc else acc.insert ns
+    | acc, _ => acc
+  -- When `namespace ns` happened (or whatever sequence of `namespace`s), `addScopes` traversed all prefixes of `ns`. So we expect those to be there.
+  -- Note that `addScope` in `elabNamespace` does not add to the open decls, so this is necessary.
+  let impliedScopes := currNamespace.foldrPrefix (init := impliedScopes) fun n acc =>
     if n.isAnonymous then acc else acc.insert n
-  -- what if we used just e.g. the `parserExtension`? or some other basic scopedEnvExtension? take it out of IO?
-  return env.activeScopes.eraseMany impliedScopes -- TODO: make an iterator, this isn't great
+  return env.activeScopes.minus impliedScopes -- TODO: make an iterator, this isn't great
 
 def extraScoped : CommandElabM NameSet := do
   return (← getEnv).extraScoped (← getCurrNamespace) (← getScope).openDecls
@@ -631,24 +665,12 @@ show_current public meta scope
   open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis
   variable (x : Nat)
 
-run_cmd do
-  let getExtraModUses
-
-
-#check List.dropAllButLast
-
 def _root_.Lean.ScopedEnvExtension.popAllScopes {α β σ} (ext : ScopedEnvExtension α β σ) (env : Environment) :
     Environment :=
   ext.ext.modifyState (asyncMode := .local) env fun s =>
     match s.stateStack with
     | stack@(_ :: _ :: _) => { s with stateStack := stack.dropAllButLast }
     | _ => s
-
-#check ImportM
-
-#check activateScoped
-
-#check PersistentEnvExtensionDescr
 
 def popAllScopes {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT (ST IO.RealWorld) m] : m Unit :=
   for ext in ← scopedEnvExtensionsRef.get do
@@ -669,6 +691,7 @@ def getRevertAllScopes : CommandElabM (List Scope × Environment) := do
   popAllScopes
   return (savedScopes, env)
 
+/-- Returns the remaining active scopes after resetting. -/
 def resetScopes (fullResetEnvExtensions := true) : CommandElabM Unit := do
   modify fun s => Id.run do
     let some headScope := s.scopes.getLast? | pure s
@@ -737,6 +760,11 @@ show_current public meta scope
 - What exactly are the rules?
 - How much dynamic trial-and-error do we have to do? `open X` too high can break things.
 
+
+
+TODO: withNamespace etc. for parsing the following command in command-capturing situations like `#autonomize`; make standard API for `scopeStx`
+
+There are two different ways to report the scope difference. Can just diff the scopeStx. Or we can diff the whole scope stack.
 -/
   -- Add the relation (e.g. `GE.ge : Set Nat → Set Nat → Prop`) to the hover on the whole term
 
@@ -745,7 +773,7 @@ def withoutModifyingScopes {α} (x : CommandElabM α) : CommandElabM α := do
   let savedScopes ← getScopes
   try x finally modify ({· with scopes := savedScopes })
 
-/-- Gets the topmost scope and current active scopes after unerifying `scopeStx`, without modifying the state. -/
+/-- Gets the topmost scope and current active scopes after unreifying `scopeStx`, without modifying the state. -/
 def observeUnreifiedScopes (scopeStx : TSyntax ``scopeStx) : CommandElabM (Scope × NameSet) :=
   withoutModifyingScopes <| withoutModifyingEnv do
     resetScopes
@@ -810,6 +838,70 @@ def _root_.List.minus {α} [BEq α] (new minus : List α) : List α :=
 #check unreifyOpenDecls
 
 -- Strategy: have a certain effect, but report discrepancies.
+
+/-- `opt₁ - opt₂` -/
+def _root_.Option.diffOnlyBySome {α} : Option α → Option α → Diff (Option α)
+  | some _, some _ => ⟨none, none⟩
+  | a, b => { added := a, lost := b }
+
+instance : Pure Diff where
+  pure x := { added := x, lost := x }
+
+instance : Functor Diff where
+  map := Diff.map
+
+#check elabOpen
+
+instance : Bind Diff where
+  bind a f :=
+    let addedDiff := f a.added
+    let lostDiff := f a.lost
+    {
+      added :=
+    }
+-- (f : A → B) ()
+open Parser.Command
+def diffSectionHeader {m} (h₁ h₂ : TSyntax ``sectionHeader) [Monad m] [MonadQuotation m]
+    [MonadExceptOf Exception m] : m <| Diff <| TSyntax ``sectionHeader :=
+  match h₁, h₂ with
+  | `(sectionHeader|
+      $[@[expose%$exposeTk₁]]? $[public%$pubTk₁]? $[noncomputable%$ncTk₁]? $[meta%$metaTk₁]?),
+    `(sectionHeader|
+      $[@[expose%$exposeTk₂]]? $[public%$pubTk₂]? $[noncomputable%$ncTk₂]? $[meta%$metaTk₂]?) => do
+    let { added := exposeTkAdded, lost := exposeTkLost } := exposeTk₁.diffOnlyBySome exposeTk₂
+    let { added := pubTkAdded, lost := pubTkLost } := pubTk₁.diffOnlyBySome pubTk₂
+    let { added := ncTkAdded, lost := ncTkLost } := ncTk₁.diffOnlyBySome ncTk₂
+    let { added := metaTkAdded, lost := metaTkLost } := metaTk₁.diffOnlyBySome metaTk₂
+    let added ← `(sectionHeader|
+        $[@[expose%$exposeTkAdded]]?
+        $[public%$pubTkAdded]?
+        $[noncomputable%$ncTkAdded]?
+        $[meta%$metaTkAdded]?)
+    let lost ← `(sectionHeader|
+        $[@[expose%$exposeTkLost]]?
+        $[public%$pubTkLost]?
+        $[noncomputable%$ncTkLost]?
+        $[meta%$metaTkLost]?)
+    return { added, lost }
+  | _, _ => throwUnsupportedSyntax
+
+
+def diffScopeStx (snew sminus : TSyntax ``scopeStx) : (Diff <| TSyntax ``scopeStx) :=
+  match snew, sminus with
+  | `(scopeStx| $sectionHeader₁ scope
+      $[universe $[$levelNames₁:ident]*]?
+      $[$namespaceStx₁]?
+      $[open $openDecls₁:reifiedOpenDecl*]?
+      $[open scoped $openScopedDecls₁:reifiedOpenScopedDecl*]?
+      $[set_options $keyVals₁:reifiedOptionKeyValue,*]?
+      $[$vars₁]?),
+    `(scopeStx| $sectionHeader₂ scope
+      $[universe $[$levelNames₂:ident]*]?
+      $[$namespaceStx₂]?
+      $[open $openDecls₂:reifiedOpenDecl*]?
+      $[open scoped $openScopedDecls₂:reifiedOpenScopedDecl*]?
+      $[set_options $keyVals₂:reifiedOptionKeyValue,*]?
+      $[$vars₂]?) =>
 
 universe v
 
@@ -904,7 +996,6 @@ syntax "#extract_universes" ppLine command : command
 -- def getSourceOf! (stx : Syntax.Range) (map : FileMap) : String.Slice :=
 --   map.source.slice! (map.source.pos! stx.start) (map.source.pos! stx.stop)
 
-def multiEditedString (map )
 
 -- thought: should have an aggregated suggestion at the top, then all other suggestions inline.
 -- `universe` gets inserted above. `#extract_universes` gets deleted at same time. aggregating changes should work for `#radicalize` as well.
@@ -1143,37 +1234,204 @@ For copy-pasting ease we do actually want root when possible, not just `end_all`
 e
 
 -/
-#check InfoTree.findSome?
 
-partial def InfoTree.findInfo? (p : Info → Bool) (t : InfoTree) : Option Info :=
-  match t with
-  | context _ t => findInfo? p t
-  | node i ts   =>
-    if p i then
-      some i
+open Lean Server Lsp RequestM Snapshots CodeAction
+
+-- @[command_code_action]
+def snippetTestAction : CommandCodeAction := fun params snap ctx node => do
+  let .node (.ofCommandInfo info) _ := node | return #[]
+  let doc ← readDoc
+  let some range := info.stx.getRange? (canonicalOnly := true) | return #[]
+  let lspRange := range.toLspRange doc.meta.text
+  return #[{
+    eager := {
+      title := "Replace with snippet test"
+      kind? := "refactor"
+      edit? := some <| WorkspaceEdit.ofTextEdit doc.versionedIdentifier {
+        range   := lspRange
+        newText := "example : ${1:Nat} := ${0:42}"
+        leanExtSnippet? := some { value := "example : ${1:Nat} := ${0:42}" }
+      }
+    }
+  }]
+
+
+def _root_.Lean.Elab.InfoTree.consumeContext (ctx? : Option ContextInfo) :
+    InfoTree → (InfoTree × Option ContextInfo)
+  | .context ctx t => t.consumeContext (ctx.mergeIntoOuter? ctx?)
+  | t => (t, ctx?)
+
+partial def _root_.Lean.Elab.InfoTree.unwrapIn (ctx? : Option ContextInfo := none) :
+    InfoTree → (InfoTree × Option ContextInfo)
+  | t₀@(.node (.ofCommandInfo info) ch) => Id.run do
+    if info.elaborator == ``expandInCmd then
+      let some t := ch[0]? | return (t₀, ctx?)
+      let (t, ctx?) := t.consumeContext ctx?
+      let .node (.ofMacroExpansionInfo _) ch := t | return (t₀, ctx?)
+      let some t := ch[ch.size - 2]? | return (t₀, ctx?)
+      return t.unwrapIn ctx?
     else
-      ts.findSome? (findInfo? p)
-  | _ => none
+      return (t₀, ctx?)
+  | .context ctx t => t.unwrapIn (ctx.mergeIntoOuter? ctx?)
+  | t => (t, ctx?)
 
-@[command_code_action Parser.Command.check]
+open Meta
+
+
+
+@[inline] def _root_.Lean.Name.unlessAnonymousThen (n m : Name) :=
+  if n.isAnonymous then m else n
+
+#check addSuggestion
+
+def debugAction (ref : Syntax) (s : String) : RequestM LazyCodeAction := do
+  let some range := ref.getRange? | return { eager := { title := "nope"} }
+  let lspRange := range.toLspRange (← readDoc).meta.text
+  return { eager := {
+    title := s
+    edit? := WorkspaceEdit.ofTextEdit (← readDoc).versionedIdentifier {
+      range := lspRange
+      newText := s
+    }
+  }}
+
+def _root_.Lean.ConstantKind.toNoun : ConstantKind → String
+  | .defn => "def"
+  | .thm => "theorem"
+  | .opaque => "opaque constant"
+  | .recursor => "recursor"
+  | .induct => "inductive type"
+  | .quot => "quot"
+  | .ctor => "constructor"
+  | .axiom => "axiom"
+
+def _root_.Lean.Name.getSuffixStr : Name → String
+| .num pre _ => pre.getSuffixStr
+| .str _ suf => suf
+| .anonymous => "[anonymous]"
+
+def mkDeclName' (currNamespace : Name) (shortName : Name) : (Name × Name) := Id.run do
+  let mut shortName := shortName.eraseMacroScopes
+  let mut currNamespace := currNamespace
+  let isRootName := rootNamespace.isPrefixOf shortName
+  let declName := if isRootName then shortName.replacePrefix rootNamespace .anonymous else currNamespace ++ shortName
+  if isRootName then
+    shortName := Name.mkSimple shortName.getSuffix
+    -- currNamespace := p.replacePrefix rootNamespace Name.anonymous
+  return (declName, shortName)
+
+def _root_.Lean.Name.freshApostrophe (env : Environment) (n : Name) : Name := Id.run do
+  let mut n := n
+  while env.contains n do
+    n := n.appendAfter "'"
+  return n
+
+def _root_.Lean.Name.freshApostropheOfShortName (env : Environment) (n : Name) : Name := Id.run do
+  let mut n := n
+  while env.contains n do
+    n := n.appendAfter "'"
+  return n
+
+@[command_code_action Parser.Command.check Parser.Command.in]
 def checkToNewDecl : CodeAction.CommandCodeAction := fun _ snap ctx tree => do
+  if snap.cmdState.messages.hasErrors then return #[] -- already handled?
+  let (tree, some ctx) := tree.unwrapIn ctx | return #[]
   let .node (.ofCommandInfo info) _ := tree | return #[]
+  /- Note: unfortunately, level names are not recorded in `ctx`. We therefore can't accommodate
+  `universe u in #check ...`. -/
+  let e := ctx
+  let currLevelNames := snap.cmdState.scopes.head?.elim [] (·.levelNames)
+  let some cmdRange := info.stx.getRange? (canonicalOnly := true) | return #[]
   match info.stx with
-  | `(#check $id:ident) => do
-    let some idRange := id.raw.getRange? | return #[]
-    let cinfo := tree.findSomeM? (ctx? := ctx) fun
-      | ctx, .ofTermInfo i, ch => do
+  | `(#check $t:term) => do
+    let some idRange := t.raw.getRange? (canonicalOnly := true) | return #[]
+    let ictx? := tree.findSome? (ctx? := ctx) fun ctx ti ch => do
+      match ti with
+      | .ofTermInfo i => do
         if i.stx.getRange?.isEqSome idRange then
-          let e ← i.runMetaM ctx do
-            let
-      | _, _, _ => false
+          return (i, ctx)
+        else
+          none
+      | _ => none
+    let some (i, ctx) := ictx? | return #[← debugAction snap.stx "something"]
+    -- This is maybe not the right point at which to abstract. When we encounter structures and instances, we want to offer the corresponding command.
+    let (type?, levelNames, newName) := Id.run do
+      if let some (n, _) := i.expr.const? then
+        if let some kind := getOriginalConstKind? snap.env n then
+          if let some info := snap.env.find? n true then
+            let n := match t with
+              | `(term|$id:ident) => id.getId.eraseMacroScopes
+              | _ => Name.mkSimple (privateToUserName n).getSuffixStr
+            -- TODO: for now, just radicalize. In the future, make sure resolution does not conflict
+            let newName := (n.appendAfter "'").freshApostropheOfShortName snap.env
+            return (some (info.type, kind), info.levelParams, newName)
+      return (none, [], `foo)
+    -- return #[← debugAction snap.stx "something 4"]
+    -- TODO: lazily?
+    let stx? ← i.runMetaM ctx do -- TODO: uh oh, is this the info node that has the synth result?
+      try
+        let (type, kind) ← type?.getDM do -- TODO: convert constructors and such into thms or defs
+          let type ← instantiateMVars <|← inferType i.expr
+          let kind := if (← inferType type).isProp then .thm else .defn
+          pure (type, kind)
+        if type.hasMVar then return none
+        -- TODO: probably some more for roundtripping. withType? universe things?
+        withOptions (fun opts => opts.setBool `pp.proofs true) do
+        let stx? ← match kind with
+          | .thm => do
+            let (id, sig) ← delabToDeclSigWithId type levelNames currLevelNames newName false
+            some <$> `(Parser.Command.declaration|
+              theorem $id:declId $sig:declSig := sorry)
+          | .defn => do
+            let (id, sig) ← delabToDeclSigWithId type levelNames currLevelNames newName true
+            some <$> `(Parser.Command.declaration|
+              def $id:declId $sig:optDeclSig := sorry)
+          | .induct -- TODO
+          | .quot
+          | .axiom -- TODO?
+          | .ctor -- TODO, test thm or def
+          | .opaque -- TODO
+          | .recursor -- ehhh fine
+            => pure <| some ⟨.atom .none s!"{kind.toNoun}"⟩
+        return stx?.map ((·, kind))
+      catch ex => return some (⟨.atom .none (← ex.toMessageData.toString)⟩, .ctor)
+    let some (stx, kind) := stx? | return #[]
+    if true then return #[← debugAction snap.stx ("aa" ++ stx.raw.getAtomVal)]
 
-  return #[{ eager := { title := s!"{info.stx}"}, lazy? := sorry }]
 
-#check checkToNewDecl
+    -- TODO: this is terrible. Lets it be modular if we rip it out, which is good, though.
+    -- But we'd need to do that lazily.
+    -- Could/should also do the pretty-printing in the runMetaM, just in case.
+    -- Filemap is `(← readDoc).meta.text`. Not sure why `RequestM` doesn't have a `MonadFileMap` instance.
+    let suggestion : Suggestion := {
+      suggestion := stx
+    }
+    -- return #[← debugAction snap.stx "something"]
+    let edit ← RequestM.runCoreM snap <| suggestion.processEdit cmdRange
+    -- return #[← debugAction snap.stx "something 446"]
+    return #[
+      {
+        eager := {
+          title := s!"New {kind.toNoun} from type" -- TODO(NOW)
+          kind? := "refactor" -- TODO(NOW)?
+          edit? := WorkspaceEdit.ofTextEdit (← readDoc).versionedIdentifier edit
+        }
+      }
+    ]
+    -- TODO(NOW): pretty print syntax to make suggestion.
+    -- snippet?
+  | _ => return #[]
 
-set_option pp.explicit true in
-#check 4
+theorem fooo : True := trivial
+
+
+
+#check Add
+
+-- #info_trees in
+-- set_option pp.explicit true in
+def foo : Nat :=
+  sorry
 
 reset_to scope
 
