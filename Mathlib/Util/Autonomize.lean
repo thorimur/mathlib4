@@ -106,6 +106,46 @@ def getTypeAndNewName (t : Term) : TermElabM (Expr × List Name × Name) := do
     let type ← inferType e
     pure (type, [], `foo)
 
+-- TODO: none of these should be called delab.
+
+def delabToDeclSig' (type : Expr) (defKind : Bool) :
+    MetaM (TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
+  -- TODO: could use the infos for hovers here
+  let (sig, _) ← delabCore type (delab := delabForallParamsWithSignature fun groups type => do
+    show DelabM <| TSyntax (if defKind then ``optDeclSig else ``declSig) from do
+      if h : defKind then
+        let stx ← `(optDeclSig| $groups* : $type)
+        pure <| by simp only [h]; exact stx
+      else
+        let stx ← `(declSig| $groups* : $type)
+        pure <| by simp only [h]; exact stx)
+  return sig
+
+def delabToDeclSig (type : Expr) :
+    MetaM (TSyntax ``declSig) := do
+  -- TODO: could use the infos for hovers here
+  let (sig, _) ← delabCore type (delab := delabForallParamsWithSignature fun groups type => do
+      `(declSig| $groups* : $type))
+  return sig
+
+def delabToOptDeclSig (type : Expr) :
+    MetaM (TSyntax ``optDeclSig) := do
+  -- TODO: could use the infos for hovers here
+  let (sig, _) ← delabCore type (delab := delabForallParamsWithSignature fun groups type => do
+      `(optDeclSig| $groups* : $type))
+  return sig
+
+-- Assumes `newName` is a shortname.
+def delabToDeclId (newName : Name) (levelNames currLevelNames : List Name) :
+    MetaM (TSyntax ``declId) := do
+  -- TODO: instantiate the names with the current ones in the type, first?
+  -- TODO: only filter them out if they preserve order?
+  let levelNames := levelNames.filter (!currLevelNames.contains ·)
+  if levelNames.isEmpty then
+      `(declId| $(mkIdent newName))
+    else
+      `(declId| $(mkIdent newName).{$(levelNames.toArray.map Lean.mkIdent),*})
+
 def delabToDeclSigWithId (type : Expr) (levelNames currLevelNames : List Name)
     (newName : Name) (defKind : Bool) :
     MetaM (TSyntax ``declId × TSyntax (if defKind then ``optDeclSig else ``declSig)) := do
@@ -1332,6 +1372,88 @@ def _root_.Lean.Name.freshApostropheOfShortName (env : Environment) (n : Name) :
     n := n.appendAfter "'"
   return n
 
+#check getStructureFields
+
+structure StructureCmdFieldInfo where
+  name : Name
+  binderInfo : BinderInfo
+  type : Expr
+  autoParam? : Option Syntax
+
+structure InductiveCmdCtorInfo where -- protected?
+  name : Name
+  type : Expr
+
+/-- Supplies information from the environment to MetaM. -/
+inductive DeclCmdInfo where
+| «def» (id : Name) (levelNames : List Name) (type : Expr)
+| «theorem» (id : Name) (levelNames : List Name) (type : Expr)
+| «structure» (id : Name) (levelNames : List Name) (type : Expr)
+  (extending : Array Name)
+  (fields : Array StructureCmdFieldInfo)
+| «inductive» (id : Name) (levelNames : List Name) (type : Expr)
+  (extending : Array Name)
+  (ctors : Array InductiveCmdCtorInfo)
+| «instance» (id? : Option Name) (levelNames : List Name) (type : Expr)
+-- | «abbrev» (id : Name) (val : Expr)
+
+namespace DeclCmdInfo
+
+def levelNames : DeclCmdInfo → List Name
+| .def       (levelNames := levelNames) .. => levelNames
+| .theorem   (levelNames := levelNames) .. => levelNames
+| .structure (levelNames := levelNames) .. => levelNames
+| .inductive (levelNames := levelNames) .. => levelNames
+| .instance  (levelNames := levelNames) .. => levelNames
+
+def type : DeclCmdInfo → Expr
+| .def       (type := type) .. => type
+| .theorem   (type := type) .. => type
+| .structure (type := type) .. => type
+| .inductive (type := type) .. => type
+| .instance  (type := type) .. => type
+
+def id? : DeclCmdInfo → Option Name
+| .def       (id := id) .. => id
+| .theorem   (id := id) .. => id
+| .structure (id := id) .. => id
+| .inductive (id := id) .. => id
+| .instance  (id? := id?) .. => id?
+
+@[simp] def optDeclSig : DeclCmdInfo → Bool
+  | .def .. => true
+  | _ => false
+
+abbrev DeclId := TSyntax ``Parser.Command.declId
+
+#check «affine space»
+
+
+def DeclCmdInfo.delabToDeclarationCmd (c : DeclCmdInfo) (currLevelNames : List Name)
+    (val? : Option Term) :
+    MetaM (TSyntax ``Parser.Command.declaration) := do
+  let valStx ← val?.getDM `(term|sorry)
+  match c with
+  | .def id levelNames type =>
+    let sig ← delabToOptDeclSig type
+    let id ← delabToDeclId id levelNames currLevelNames
+    `(Parser.Command.declaration| def $id:declId $sig:optDeclSig := $valStx:term)
+  | .theorem id levelNames type =>
+    let sig ← delabToDeclSig type
+    let id ← delabToDeclId id levelNames currLevelNames
+    `(Parser.Command.declaration| theorem $id:declId $sig:declSig := $valStx:term)
+  | .instance id? levelNames type =>
+    let sig ← delabToDeclSig type
+    let id? : Option DeclId ← id?.mapM (delabToDeclId · levelNames currLevelNames)
+    `(Parser.Command.declaration| instance $[$id:declId]? $sig:declSig := $valStx:term)
+  | .structure id levelNames type extending fields => _
+  | .inductive id levelNames type extending ctors => _
+
+
+
+
+
+
 @[command_code_action Parser.Command.check Parser.Command.in]
 def checkToNewDecl : CodeAction.CommandCodeAction := fun _ snap ctx tree => do
   if snap.cmdState.messages.hasErrors then return #[] -- already handled?
@@ -1354,7 +1476,8 @@ def checkToNewDecl : CodeAction.CommandCodeAction := fun _ snap ctx tree => do
           none
       | _ => none
     let some (i, ctx) := ictx? | return #[← debugAction snap.stx "something"]
-    -- This is maybe not the right point at which to abstract. When we encounter structures and instances, we want to offer the corresponding command.
+    -- This is maybe not the right point at which to abstract. When we encounter inductives, structures, and instances, we want to offer the corresponding command. Or maybe it is the right points, we just need to provide more information; we ahve the `Environment`, after all.
+    -- And we don't ever *stop* here. We still need to `runMetaM`. So the only question is if breaking after here is good for laziness somehow.
     let (type?, levelNames, newName) := Id.run do
       if let some (n, _) := i.expr.const? then
         if let some kind := getOriginalConstKind? snap.env n then
