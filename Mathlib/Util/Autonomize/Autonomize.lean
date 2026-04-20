@@ -5,6 +5,7 @@ public meta import Lean.Elab.BuiltinCommand
 public meta import Lean.PrettyPrinter.Delaborator
 import Batteries
 public meta import Mathlib.Lean.Elab.InfoTree
+public meta import Aesop.Util.Basic -- Name.ofComponents...
 
 -- set_option pp.explicit true
 
@@ -450,21 +451,47 @@ partial def Lean.Syntax.merge! : Syntax → Syntax → Syntax
   | .missing, stx => stx
   | stx, _ => stx
 
-def Bool.toDummyOptional? (b : Bool) : Option Syntax :=
-  if b then some .missing else none
+structure SectionHeader where
+  expose : Bool := false
+  isPublic : Bool := false
+  isNoncomputable : Bool := false
+  isMeta : Bool := false
 
-open Parser.Command in
-def Lean.Elab.Command.Scope.toSectionHeader {m} [Monad m] [MonadQuotation m] :
-    Scope → m (TSyntax ``sectionHeader)
-  | { isPublic, isMeta, isNoncomputable, attrs .. } => do
+open Parser.Command
+def SectionHeader.toSyntax {m} [Monad m] [MonadQuotation m] :
+    SectionHeader → m (TSyntax ``sectionHeader)
+  | { expose, isPublic, isNoncomputable, isMeta } =>
     letI toDummyOptional? (b : Bool) : Option Syntax :=
       if b then some .missing else none
     let pubTk    := toDummyOptional? isPublic
     let metaTk   := toDummyOptional? isMeta
-    let exposeTk := toDummyOptional? !attrs.isEmpty
+    let exposeTk := toDummyOptional? expose
     let ncTk     := toDummyOptional? isNoncomputable
     `(sectionHeader|
       $[@[expose%$exposeTk]]? $[public%$pubTk]? $[noncomputable%$ncTk]? $[meta%$metaTk]?)
+
+def SectionHeader.ofSyntax : (TSyntax ``sectionHeader) → Option SectionHeader
+  | `(sectionHeader|
+      $[@[expose%$exposeTk]]? $[public%$pubTk]? $[noncomputable%$ncTk]? $[meta%$metaTk]?) =>
+    some {
+      expose := exposeTk.isSome
+      isPublic := pubTk.isSome
+      isNoncomputable := ncTk.isSome
+      isMeta := metaTk.isSome
+    }
+  | _ => none
+
+@[inline] def Lean.Elab.Command.Scope.toSectionHeader : Scope → SectionHeader
+  | { isPublic, isMeta, isNoncomputable, attrs .. } =>
+    { isPublic, isMeta, isNoncomputable, expose := !attrs.isEmpty }
+
+def Bool.toDummyOptional? (b : Bool) : Option Syntax :=
+  if b then some .missing else none
+
+open Parser.Command in
+def Lean.Elab.Command.Scope.toSectionHeaderStx {m} [Monad m] [MonadQuotation m] (scope : Scope) :
+    m (TSyntax ``sectionHeader) :=
+  scope.toSectionHeader.toSyntax
 
 def unreifySectionHeader (header : TSyntax ``Parser.Command.sectionHeader) : CommandElabM Unit :=
   match header with
@@ -588,7 +615,7 @@ def getUniverseStx : CommandElabM (Option <| TSyntax ``Parser.Command.universe) 
     some <$> `(Parser.Command.universe| universe $(levelNames.toArray.map mkIdent)*)
 
 def reifyScope : CommandElabM (TSyntax ``scopeStx) := do
-  let sectionHeader ← (← getScope).toSectionHeader
+  let sectionHeader ← (← getScope).toSectionHeaderStx
   let universes ← getUniverseStx
   let namespaceStx ← getCurrNamespaceSyntax
   let opens ← reifyOpenDecls (← getScope).openDecls
@@ -820,8 +847,6 @@ def observeUnreifiedScopes (scopeStx : TSyntax ``scopeStx) : CommandElabM (Scope
     unreifyScopeInBaseScope scopeStx
     return (← getScope, (← getEnv).activeScopes)
 
-structure ScopeDiff where
-  newLevelNames : List Name
   -- new
 
 -- class HDiff (α) (β) (γ) where
@@ -833,6 +858,11 @@ structure ScopeDiff where
 structure Diff (α : Type u) where
   added : α
   lost : α
+
+-- Way too restrictive in choosing `α` as the type, but so is Diff. Also we don't have a way to put them back together! But enough for now.
+structure CompleteDiff (α : Type u) extends Diff α where
+  /-- The part common to `added` and `lost` which was removed from both. -/
+  canceled : α
 
 class HasDiffType (α : Type u) where
   DiffType : Type u
@@ -854,14 +884,65 @@ export Diffable (diff)
 def Diff.map {α} {β} (f : α → β) : Diff α → Diff β
   | { added, lost } => { added := f added, lost := f lost }
 
+
+@[specialize f] -- TODO: or inline?
+def CompleteDiff.map {α} {β} (f : α → β) : CompleteDiff α → CompleteDiff β
+  | { added, lost, canceled } => { added := f added, lost := f lost, canceled := f canceled }
+
+@[inline]
+def CompleteDiff.mapCanceled {α} (f : α → α) : CompleteDiff α → CompleteDiff α
+  | { added, lost, canceled } => { added, lost, canceled := f canceled }
+
+@[specialize f]
+def CompleteDiff.mapDiff {α} (f : α → α) : CompleteDiff α → CompleteDiff α
+  | { added, lost, canceled } => { added := f added, lost := f lost, canceled }
+
+
 @[specialize f]
 def Diff.mapM {α} {β} {m} [Monad m] (f : α → m β) : Diff α → m (Diff β)
   | { added, lost } => return { added := ← f added, lost := ← f lost }
 
+@[specialize f] -- TODO: or inline?
+def CompleteDiff.mapM {α} {β} {m} [Monad m] (f : α → m β) : CompleteDiff α → m (CompleteDiff β)
+  | { added, lost, canceled } =>
+    return { added := ← f added, lost := ← f lost, canceled := ← f canceled }
+
+/-- Removes the common prefix of the two lists to get `l'₁` (added), `l'₂` (lost). -/
 def _root_.List.diffByPrefix {α} [BEq α] : List α → List α → Diff (List α)
   | n@(nh :: nrest), m@(mh :: mrest) =>
     if nh == mh then nrest.diffByPrefix mrest else { added := n, lost := m }
   | n, m => { added := n, lost := m }
+
+def _root_.List.cdiffByPrefixAux {α} [BEq α] (acc : List α) :
+    List α → List α → CompleteDiff (List α)
+  | n@(nh :: nrest), m@(mh :: mrest) =>
+    if nh == mh then cdiffByPrefixAux (nh :: acc) nrest mrest else
+      { added := n, lost := m, canceled := acc }
+  | n, m => { added := n, lost := m, canceled := acc }
+
+/-- Removes the common prefix of the two lists to get `l'₁` (added), `l'₂` (lost). **The canceled value is reversed.** -/
+def _root_.List.cdiffByPrefix {α} [BEq α] (l₁ l₂ : List α) : CompleteDiff (List α) :=
+  List.cdiffByPrefixAux [] l₁ l₂
+
+/-- splits foo ++ n₁, foo ++ n₂, into foo, n₁, and n₂. -/
+def _root_.Lean.Name.cdiffByPrefix : Name → Name → CompleteDiff Name
+  | n₁, n₂ =>
+    let n₁ := n₁.components; let n₂ := n₂.components
+    let cdiff := n₁.cdiffByPrefix n₂
+    cdiff.mapCanceled (·.reverse) |>.map Aesop.Name.ofComponents
+
+/-- Removes the common suffix of the two lists to get `l'₁` (added), `l'₂` (lost).  **The canceled value is reversed.** -/
+def _root_.List.cdiffBySuffix {α} [BEq α] (l₁ l₂ : List α) : CompleteDiff (List α) :=
+  l₁.reverse.cdiffByPrefix l₂.reverse |>.map (·.reverse)
+
+/-- Surely exists somewhere. -/
+def _root_.List.prependToWithFlipBack {α} (l : List α) : List α → List α
+  | a :: rest => prependToWithFlipBack (a :: l) rest
+  | [] => l
+
+def CompleteDiff.addBackAsPrefix {α} (c : CompleteDiff (List α)) : Diff (List α) where
+  added := c.added.prependToWithFlipBack c.canceled
+  lost := c.lost.prependToWithFlipBack c.canceled
 
 def _root_.Name.diff (new minus : Name) : Diff Name :=
   -- TODO: be better
@@ -879,7 +960,7 @@ def _root_.List.minus {α} [BEq α] (new minus : List α) : List α :=
 
 -- Strategy: have a certain effect, but report discrepancies.
 
-/-- `opt₁ - opt₂` -/
+/-- `opt₁ - opt₂`, but ignoring the difference between `some x` and `some y`.  -/
 def _root_.Option.diffOnlyBySome {α} : Option α → Option α → Diff (Option α)
   | some _, some _ => ⟨none, none⟩
   | a, b => { added := a, lost := b }
@@ -890,17 +971,76 @@ instance : Pure Diff where
 instance : Functor Diff where
   map := Diff.map
 
-#check elabOpen
+#check scopeStx
 
-instance : Bind Diff where
-  bind a f :=
-    let addedDiff := f a.added
-    let lostDiff := f a.lost
-    {
-      added :=
-    }
+-- MARK: ScopeDiff
+
+-- Another approach is to just to have pairs and reocmpute the common canceled by typeclass api or something.
+
+/-- The difference between the lists as sets, preserving the order from the positive component for the intersection `canceled`. Could be more performant; we traverse `l₂` far too many times. -/
+def cdiffList {α} [BEq α] (l₁ l₂ : List α) : CompleteDiff (List α) :=
+  let (intersection, remaining₁) := l₁.partition l₂.contains
+  let remaining₂ := l₂.filter (!intersection.contains ·)
+  { added := remaining₁, lost := remaining₂, canceled := intersection }
+
+def cdiffNameSet (n₁ n₂ : NameSet) : CompleteDiff NameSet :=
+  let (intersection, remaining₁) := n₁.partition n₂.contains
+  let remaining₂ := n₂.eraseMany intersection
+  { added := remaining₁, lost := remaining₂, canceled := intersection }
+
+def cdiffArray {α} [BEq α] (l₁ l₂ : Array α) : CompleteDiff (Array α) :=
+  let (intersection, remaining₁) := l₁.partition l₂.contains
+  let remaining₂ := l₂.filter (!intersection.contains ·)
+  { added := remaining₁, lost := remaining₂, canceled := intersection }
+
+@[specialize eq]
+def cdiffArrayBy {α} (l₁ l₂ : Array α) (eq : α → α → Bool) : CompleteDiff (Array α) :=
+  let (intersection, remaining₁) := l₁.partition fun a => l₂.any (eq a)
+  let remaining₂ := l₂.filter fun a => !intersection.any (eq a)
+  { added := remaining₁, lost := remaining₂, canceled := intersection }
+
+@[specialize p]
+def _root_.Array.partitionM {α} {m} [Monad m] (p : α → m Bool) (as : Array α) :
+    m (Array α × Array α) := do
+  let mut bs := #[]
+  let mut cs := #[]
+  for a in as do
+    if ← p a then
+      bs := bs.push a
+    else
+      cs := cs.push a
+  return (bs, cs)
+
+@[specialize eq]
+def cdiffArrayByM {α} {m} [Monad m] (l₁ l₂ : Array α) (eq : α → α → m Bool) :
+    m (CompleteDiff (Array α)) := do
+  let (intersection, remaining₁) ← l₁.partitionM fun a => l₂.anyM (eq a)
+  let remaining₂ ← l₂.filterM fun a => notM <| intersection.anyM (eq a)
+  return { added := remaining₁, lost := remaining₂, canceled := intersection }
+
+structure ScopeDiff where
+  /-- Only diffs by stripping the common *suffix*, since we want to be aware of changes in universe order and the most recent levels are outermost. -/
+  levelDiff : CompleteDiff (List Name)
+  /-- Does not do any processing: added is new, lost is old. -/
+  headerDiff : Diff (SectionHeader)
+  /-- Only the prefix is canceled out. -/
+  namespaceDiff : CompleteDiff Name
+  /-- The difference between the lists "as sets", but preserving order where possible. This should be improved. -/
+  openDiff : CompleteDiff (List OpenDecl)
+  /-- The difference between the *extra* open scopes. In a sense, the extra open scoped are already `scopes - expectedScopes` (from the open decls and namespaces). -/
+  extraOpenScopedDiff : CompleteDiff NameSet
+  -- A reason that `CompleteDiff` should be some kind of typeclass: the diff structure is not like a pair.
+
+  setOptionDiff : NameMap (Diff (Option DataValue))
+  /-- Syntax is (TODO) normalized, then diffed. However, (TODO) do we need to account for dependencies? -/
+  varDiff : CompleteDiff (Array Syntax)
+  includeDiff : CompleteDiff (Array Syntax)
+  omitDiff : CompleteDiff (Array Syntax)
+
+
+
+
 -- (f : A → B) ()
-open Parser.Command
 def diffSectionHeader {m} (h₁ h₂ : TSyntax ``sectionHeader) [Monad m] [MonadQuotation m]
     [MonadExceptOf Exception m] : m <| Diff <| TSyntax ``sectionHeader :=
   match h₁, h₂ with
@@ -988,6 +1128,8 @@ partial instance {m} [Monad m] : ForIn m TopDownWithIndex (Syntax × SyntaxIndex
     | ForInStep.done b  => return b
 
 syntax "#radicalize" ppLine command : command
+
+
 
 elab_rules : command
 | `(#radicalize%$tk $cmd:command) => do
@@ -1080,63 +1222,6 @@ syntax "#extract_universes" ppLine command : command
   --     for (_, declId) in declIds do
   --       logWarningAt declId m!"`#radicalize` could not infer the full declaration name of {declId}."
 
-
-show_current public meta scope
-  universe v u
-  namespace Foo
-  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis (@Bool hiding not)
-  variable (x : Nat) (stx : Syntax) (n : Nat)
-
-reset_to scope
-
-namespace Fooo
-
-public def a := true
-
-end Fooo
-
-namespace Bar
-
-public def a := false
-
-end Bar
-
-namespace Baz
-
-public def a := false
-
-end Baz
-
--- reset_to (pop := false) scope
-
--- #scopes
-
--- Because Lean
-
-reset_to scope
-
-open Fooo Bar Fooo Baz Bar
-
-show_current scope
-  open @Fooo @Bar @Baz
-
-run_cmd do Lean.logInfo m!"{← Lean.resolveGlobalName `a}"
-
-reset_to scope
-
-open Bar Fooo Baz Fooo Baz Fooo
-
-show_current scope
-  open @Bar @Fooo @Baz
-
-run_cmd do Lean.logInfo m!"{← Lean.resolveGlobalName `a }"
-
-reset_to public meta scope
-  universe v u
-  namespace Foo
-  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Meta.Tactic.TryThis (@Bool hiding not) @Lean
-    @Lean.Elab @Lean.Elab @Lean.Elab.Command @Lean.Elab.Command @Lean.Elab.Command
-  variable (x : Nat) (stx : Syntax) (n : Nat)
 
 def dropNamespace (ns : Name) (check := false) : CommandElabM Unit := do
   if check then
