@@ -1,0 +1,9 @@
+{
+	"Deriving instance": {
+		"scope": "lean4",
+		"prefix": "deriving",
+		"body": [
+			"deriving instance $1 for $2"
+		]
+	}
+}

@@ -1,0 +1,16 @@
+
+- attributes
+- environment extensions
+- how tactics work
+- how to use syntax quotations
+- life cycle of a lean file
+- how metavariables work
+- how free variables & the local context works
+- bound variables!
+- Lean expression overview
+- pretty-printing
+- logging/debugging
+- declaring syntax/*_rules
+- linters!
+- IO: Refs, etc.
+- monad stack
