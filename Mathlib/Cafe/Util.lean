@@ -6,7 +6,6 @@ public import Mathlib.Cafe.Repr
 
 open Lean Elab Term Tactic Command
 
-
 elab tk:"#show_stx" ppLine colGe cmd:command : command => do
   logInfoAt tk m!"{format cmd}"; elabCommand cmd
 elab tk:"#show_stx!" ppLine colGe cmd:command : command => do
