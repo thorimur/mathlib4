@@ -90,6 +90,8 @@ instance : Repr Options where
 
 deriving instance Repr for OpenDecl, Scope
 
+-- #check MessageData
+
 elab "#scopes" : command => do
   logInfo m!"{repr <|← getScopes}"
 
@@ -956,9 +958,17 @@ def _root_.List.minus {α} [BEq α] (new minus : List α) : List α :=
 -- def _root_.List.diff' {α} [BEq α] (new minus : List α) : Diff (List α) :=
 --   { added := new.filter (!minus.contains ·), lost := minus.filter (!new.contains ·) }
 
-#check unreifyOpenDecls
+new_scope scope
+show_current public meta scope
+  universe u
+  namespace Foo
+  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Parser.Command @Lean.Meta.Tactic.TryThis
+    (@Bool hiding not)
+  variable (x : Nat)
 
+#check elabDeclaration
 -- Strategy: have a certain effect, but report discrepancies.
+#check CommandElabM
 
 /-- `opt₁ - opt₂`, but ignoring the difference between `some x` and `some y`.  -/
 def _root_.Option.diffOnlyBySome {α} : Option α → Option α → Diff (Option α)
@@ -972,6 +982,28 @@ instance : Functor Diff where
   map := Diff.map
 
 #check scopeStx
+
+variable (x : Nat)
+
+
+
+reset_to public meta scope
+  universe u
+  namespace Foo.Foo
+  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Parser.Command @Lean.Meta.Tactic.TryThis
+    (@Bool hiding not)
+  set_options pp.all true
+  variable (x : Nat)
+
+def foo := x
+
+namespace Foo
+
+-- variable (x : Nat)
+
+#scopes
+
+
 
 -- MARK: ScopeDiff
 
@@ -1265,6 +1297,34 @@ def integrateScopes (scopeStx : TSyntax ``scopeStx) (exact := false) :
 
 
   -- let openDiff
+
+-- MARK: Deps
+
+/-
+Assume for now it's a single command that we've captured. In the future we might either
+1. create a more complicated section-like command (+parser) that elaborates multiple commands and reports back
+2. create a truly nonlocal `end`-ish command communicated with through the environment
+-/
+
+/-
+# `shake` affordances
+
+The current module `currMod` in the following is the module in which the function is called.
+
+- `recordIndirectModUse (kind : String) (decl : Name)`:
+  [`mod₂` uses `decl`] ⇒ [`mod₂` needs `currMod`]   (`kind`-wise)
+  `indirectModUseExt`, local olean data
+- `recordExtraModUse (modName : Name)`
+  [`currMod` needs `modName`]  (non-transitive)
+  `extraModUses`, local olena data
+- `recordExtraModUseFromDecl (decl : Name)`
+  [`currMod` needs DepsOf(`decl`))]   (DepsOf(decl) = { mod | ∀ mod₂, mod₂ uses decl ⇒ mod₂ needs mod })
+  `extraModUses`
+- `recordExtraRevUseOfCurrentModule`
+  `mod₂` imports `currMod` ⇒ `mod₂` needs `currMod`
+-/
+
+#check recordExtraRevUseOfCurrentModule
 
 
 -- Next up integrating, or tracing dependencies? Kind of like not just reify scopes, but extract. Hard to tell what matters for tactics and such though.
