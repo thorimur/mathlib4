@@ -13,7 +13,7 @@ public meta import Aesop.Util.Basic -- Name.ofComponents...
 --   let opts ← Lean.getOptions
 --   Lean.logInfo m!"{(← Lean.Elab.Command.getScopes).length}"
 
-#check Add
+
 
 def Add'.{u} (α : Type u) : Type u := sorry
 
@@ -458,6 +458,36 @@ structure SectionHeader where
   isPublic : Bool := false
   isNoncomputable : Bool := false
   isMeta : Bool := false
+deriving BEq, Inhabited, Repr
+
+@[inline]
+def Bool.minus (b minus : Bool) : Bool := b && !minus
+
+@[inline]
+def SectionHeader.map (f : Bool → Bool) : SectionHeader → SectionHeader
+  | { expose, isPublic, isNoncomputable, isMeta } => {
+      expose := f expose
+      isPublic := f isPublic
+      isNoncomputable := f isNoncomputable
+      isMeta := f isMeta }
+
+@[inline]
+def SectionHeader.mapThread (f : Bool → Bool → Bool) (h₁ h₂ : SectionHeader) : SectionHeader where
+  expose := f h₁.expose h₂.expose
+  isPublic := f h₁.isPublic h₂.isPublic
+  isNoncomputable := f h₁.isNoncomputable h₂.isNoncomputable
+  isMeta := f h₁.isMeta h₂.isMeta
+
+def SectionHeader.join (h₁ h₂ : SectionHeader) : SectionHeader :=
+  h₁.mapThread (· || ·) h₂
+
+variable (b₁ b₂ : Bool)
+
+def SectionHeader.minus (new old : SectionHeader) : SectionHeader :=
+  new.mapThread Bool.minus old
+
+def SectionHeader.meet (h₁ h₂ : SectionHeader) : SectionHeader :=
+  h₁.mapThread (· && ·) h₂
 
 open Parser.Command
 def SectionHeader.toSyntax {m} [Monad m] [MonadQuotation m] :
@@ -952,9 +982,6 @@ def _root_.Name.diff (new minus : Name) : Diff Name :=
 
 instance : Diffable Name := ⟨Name.diff⟩
 
-def _root_.List.minus {α} [BEq α] (new minus : List α) : List α :=
-  new.filter (!minus.contains ·)
-
 -- def _root_.List.diff' {α} [BEq α] (new minus : List α) : Diff (List α) :=
 --   { added := new.filter (!minus.contains ·), lost := minus.filter (!new.contains ·) }
 
@@ -986,14 +1013,6 @@ instance : Functor Diff where
 variable (x : Nat)
 
 
-
-reset_to public meta scope
-  universe u
-  namespace Foo.Foo
-  open @Lean @Lean.Elab @Lean.Elab.Command @Lean.Parser.Command @Lean.Meta.Tactic.TryThis
-    (@Bool hiding not)
-  set_options pp.all true
-  variable (x : Nat)
 
 def foo := x
 
@@ -1050,11 +1069,34 @@ def cdiffArrayByM {α} {m} [Monad m] (l₁ l₂ : Array α) (eq : α → α → 
   let remaining₂ ← l₂.filterM fun a => notM <| intersection.anyM (eq a)
   return { added := remaining₁, lost := remaining₂, canceled := intersection }
 
+structure Step (α) where
+  old : α
+  new : α
+
+abbrev Namespace := Name
+
+def Namespace.cdiff : Step Namespace → CompleteDiff Namespace
+  | { old, new } => new.cdiffByPrefix old
+
+abbrev LevelNames := List Name
+
+def LevelNames.mostRecent? : LevelNames → Option Name := List.head?
+
+def LevelNames.first? : LevelNames → Option Name := List.getLast?
+
+def LevelNames.cdiff : Step Namespace → CompleteDiff Namespace
+  | { old, new } => new.cdiffByPrefix old
+
+def SectionHeader.cdiff : Step SectionHeader → CompleteDiff SectionHeader
+  | { old, new } => { added := new.minus old, lost := old.minus new, canceled := new.meet old }
+
 structure ScopeDiff where
   /-- Only diffs by stripping the common *suffix*, since we want to be aware of changes in universe order and the most recent levels are outermost. -/
-  levelDiff : CompleteDiff (List Name)
-  /-- Does not do any processing: added is new, lost is old. -/
-  headerDiff : Diff (SectionHeader)
+  levelSequenceDiff : CompleteDiff LevelNames
+  /-- Looks at the difference in levels as sets. -/
+  levelSetDiff : CompleteDiff LevelNames
+  /-- Just old and new. -/
+  headerDiff : CompleteDiff SectionHeader
   /-- Only the prefix is canceled out. -/
   namespaceDiff : CompleteDiff Name
   /-- The difference between the lists "as sets", but preserving order where possible. This should be improved. -/
@@ -1062,14 +1104,42 @@ structure ScopeDiff where
   /-- The difference between the *extra* open scopes. In a sense, the extra open scoped are already `scopes - expectedScopes` (from the open decls and namespaces). -/
   extraOpenScopedDiff : CompleteDiff NameSet
   -- A reason that `CompleteDiff` should be some kind of typeclass: the diff structure is not like a pair.
-
+  -- TODO: doesn't account for different defValues.
   setOptionDiff : NameMap (Diff (Option DataValue))
-  /-- Syntax is (TODO) normalized, then diffed. However, (TODO) do we need to account for dependencies? -/
+  /-- Syntax is (TODO) normalized, then diffed. However, (TODO) do we need to account for dependencies in the syntax? Probably, but we also need to know if the variables were actually *used*, which is harder. We also don't know when some variables depend on some other variables without elaborating—but that's alright, we can elaborate. So, TODO: propagate variable dependencies. -/
   varDiff : CompleteDiff (Array Syntax)
   includeDiff : CompleteDiff (Array Syntax)
   omitDiff : CompleteDiff (Array Syntax)
 
+/-- Maybe we'll get rid of this. -/
+structure ScopeJoinMinusOld where
+  /-- We just add more levels in as needed. This is just `newLevels.minus oldLevels`. Actually slightly different from what we record? Actually, now it's just the `added` from `levelSetDiff` -/
+  moreLevels : LevelNames
+  /-- Just the `added` -/
+  moreHeaders : SectionHeader
+  /-- `some .anonymous` means the current namespace is the same as the new one; `none` means the
+  old namespace is not a prefix of the new one, and we cannot get to the join (we disallow `end`s
+  and custom resets). Basically `if lost.isAnonymous then some added else none`. -/
+  extraNamespaceSuffix : Option Name
+  /-- Just `newOpens.minus oldOpens` for now. -/
+  extraOpenDecls : List OpenDecl
+  -- We'll actually just figure out the extra open scoped later. What we need is actually `newExtraScoped - resultingScopes(oldOpens + extraProducedOpens)`. Note that `newProducedOpens` might be a strict superset of `extraOpenDecls` from unavoidable extra opening.
+  -- extraOpenScoped : NameSet
+  /-- Just the `added` -/
+  newSetOptions : NameMap DataValue
+  /-- Just the `added` -/
+  extraVars : Array Syntax
+  extraInclude : Array Syntax
+  extraOmit : Array Syntax
 
+
+/-
+
+So the plan is to log on each location for how it compares to the current one, plus a summary at the top, plus options for fixing each one individually. Plus means of flipping back and forth between "updating" to the new scopes vs. not.
+
+-/
+
+#scopes
 
 
 -- (f : A → B) ()
