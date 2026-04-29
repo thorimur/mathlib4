@@ -20,9 +20,21 @@ instance : Singleton (α × β) (PersistentHashMap α β) where
 instance : Insert (α × β) (PersistentHashMap α β) where
   insert | (a, b), m => m.insert a b
 
+def PersistentHashMap.ofList (l : List (α × β)) : PersistentHashMap α β :=
+  l.foldl (init := .empty) fun acc (a, b) => acc.insert a b
+
 instance [Repr α] [Repr β] : Repr (PersistentHashMap α β) where
-  reprPrec m _ :=
-    .bracket "{ " (f!", ".joinSep (m.toList.map repr)) " }"
+  reprPrec m
+    | 0 => f!"PersistentHashMap.ofList {repr m.toList}"
+    | _ => .paren f!"PersistentHashMap.ofList {repr m.toList}"
+
+def PersistentArray.ofArray (a : Array α) : PersistentArray α :=
+  a.foldl (init := .empty) fun acc a => acc.push a
+
+instance [Repr α] : Repr (PersistentArray α) where
+  reprPrec m
+    | 0 => f!"PersistentArray.ofArray {repr m.toArray}"
+    | _ => .paren f!"PersistentArray.ofArray {repr m.toArray}"
 
 end
 
@@ -162,8 +174,6 @@ macro "stub_repr " t:term : command => do
 variable (α : Type) [Repr α] in
 deriving instance Repr for FVarIdMap α
 deriving instance Repr for Lean.LocalDecl
-deriving instance Repr for Lean.PersistentArrayNode
-deriving instance Repr for Lean.PersistentArray
 deriving instance Repr for Lean.LocalContext
 deriving instance Repr for Lean.LocalInstance
 deriving instance Repr for Lean.LocalInstances
