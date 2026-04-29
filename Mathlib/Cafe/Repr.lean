@@ -9,6 +9,25 @@ open Lean Elab Term Command
 
 public meta section
 
+variable {α} {β} [BEq α] [Hashable α]
+
+instance : EmptyCollection (PersistentHashMap α β) where
+  emptyCollection := PersistentHashMap.empty
+
+instance : Singleton (α × β) (PersistentHashMap α β) where
+  singleton | (a, b) => PersistentHashMap.empty.insert a b
+
+instance : Insert (α × β) (PersistentHashMap α β) where
+  insert | (a, b), m => m.insert a b
+
+instance [Repr α] [Repr β] : Repr (PersistentHashMap α β) where
+  reprPrec m _ :=
+    .bracket "{ " (f!", ".joinSep (m.toList.map repr)) " }"
+
+end
+
+public meta section
+
 syntax "deriving_recursively " "instance " ident " for " term,+ : command
 open Meta
 def addLocalInstances (cls : Name) {β} (x : MetaM β) : List FVarId → MetaM β
@@ -140,7 +159,6 @@ macro "stub_repr " t:term : command => do
 
 -- #synth Repr (∀ α [Repr α] [BEq α] [Hashable α] β [Repr β] , PersistentHashMap α β)
 
-deriving instance Repr for PersistentHashMap.Entry, PersistentHashMap.Node, PersistentHashMap
 variable (α : Type) [Repr α] in
 deriving instance Repr for FVarIdMap α
 deriving instance Repr for Lean.LocalDecl
