@@ -406,18 +406,31 @@ Okay, so here's what I realized. We should just be maximally reifying. The integ
 -- TODO: switch order?
 public section
 
--- TODO: prepend `_root_` instead of `@` for copy-paste affordance? Or discourage this to avoid making it easy to "hold it wrong"?
+-- The "inlinable" parsers in this section exist to enable syntax quotations.
+
+/-- An unambiguous rendering of the result of `open ns renaming from → to, ...` and
+`open ns (id₁ id₂ ...)`, which both do not record `ns`, but only the mapping from unresolved
+identifier to fully resolved name(s). -/
 syntax reifiedExplicitOpenStx := ident " → " ident
--- TODO: wrap in parens for `hiding`? only technically unambiguous thanks to `@`.
-syntax reifiedSimpleOpenStx := &"@" noWs ident
+syntax reifiedSimpleOpenIdent := &"@" noWs ident
 syntax reifiedSimpleOpenHidingStx := &"@" noWs ident " hiding " ident*
 syntax reifiedOpenDecl := ppSpace colGt
-  (reifiedSimpleOpenStx <|> ("(" reifiedSimpleOpenHidingStx <|> reifiedExplicitOpenStx ")"))
+  (reifiedSimpleOpenIdent <|> ("(" reifiedSimpleOpenHidingStx <|> reifiedExplicitOpenStx ")"))
+
+/-- Renders the result of `open` by prefixing identifiers with `@` to indicate that this syntax
+only renders fully-resolved namespaces. Surrounded by `()` when `hiding` is present. Uses `→` to
+render the mappings produced by `open ns renaming from → to, ...` and
+`open ns (id₁ id₂ ...)`. -/
 syntax reifiedOpenStx := withPosition(atomic("open" notFollowedBy("scoped")) ppIndent(reifiedOpenDecl*))
+/-- Renders the open scopes that are not accounted for by generic `open`s. Prefixes identifiers with `@` to show the fully-resolved name. -/
+syntax reifiedOpenScopedStx := withPosition("open " "scoped"
+  ppIndent((ppSpace colGt reifiedSimpleOpenIdent)*))
+
+-- Parser of convenience, since we handle these together.
 syntax reifiedVarStx := Parser.Command.variable (ppLine Parser.Command.include)? (ppLine Parser.Command.omit)?
-syntax reifiedOpenScopedDecl := ppSpace colGt "@" noWs ident
-syntax reifiedOpenScopedStx := withPosition("open " "scoped" ppIndent(reifiedOpenScopedDecl*))
+
 syntax reifiedOptionKeyValue := ppSpace colGt ident ppSpace optionValue
+/-- `set_options key₁ val₁, key₂ val₂, ...` renders the options set in a single line. -/
 syntax reifiedSetOptionsStx := withPosition("set_options " ppIndent(reifiedOptionKeyValue,*))
 
 /--
@@ -433,7 +446,11 @@ A scope specification of the form
   (include ...)?
   (omit ...)?
 ```
-Currently, these must appear in order. Notice the differences from typical scope syntax.
+Notice the differences from typical scope syntax.
+
+Note also that this is intended to reify semantic and instantaneous aspects of a given scope,
+and not the entire scope stack. This means that `section`s and local scopes are not
+accounted for here.
 -/
 syntax scopeStx := Parser.Command.sectionHeader &"scope"
   (ppLine colGt Parser.Command.universe)?
@@ -657,7 +674,8 @@ def reifyScope : CommandElabM (TSyntax ``scopeStx) := do
 
   let extraScopedNames ← extraScoped
   let extraScoped ← if extraScopedNames.isEmpty then pure none else
-    let extraScoped ← extraScopedNames.toArray.mapM fun n => `(reifiedOpenScopedDecl| @$(mkIdent n))
+    let extraScoped ← extraScopedNames.toArray.mapM fun n =>
+      `(reifiedSimpleOpenIdent| @$(mkIdent n))
     some <$> `(reifiedOpenScopedStx| open scoped $extraScoped*)
 
   let newOpts ← getNewOptions -- TODO: actually, the base scope may be polluted, right? So maybe just list all of them.
@@ -708,7 +726,7 @@ def unreifyScopeInBaseScope : TSyntax ``scopeStx → CommandElabM Unit
       $[universe $[$levelNames:ident]*]?
       $[$namespaceStx]?
       $[open $openDecls:reifiedOpenDecl*]?
-      $[open scoped $openScopedDecls:reifiedOpenScopedDecl*]?
+      $[open scoped $openScopedDecls:reifiedSimpleOpenIdent*]?
       $[set_options $keyVals:reifiedOptionKeyValue,*]?
       $[$vars]?) => do
     let [_] ← getScopes
@@ -723,7 +741,7 @@ def unreifyScopeInBaseScope : TSyntax ``scopeStx → CommandElabM Unit
       unreifyOpenDecls openDecls
     if let some openScopedDecls := openScopedDecls then
       for openScoped in openScopedDecls do
-        let `(reifiedOpenScopedDecl| @$id) := openScoped | throwUnsupportedSyntax
+        let `(reifiedSimpleOpenIdent| @$id) := openScoped | throwUnsupportedSyntax
         activateScoped id.getId
     if let some keyVals := keyVals then
       for keyVal in keyVals.getElems do
@@ -1174,14 +1192,14 @@ def diffScopeStx (snew sminus : TSyntax ``scopeStx) : (Diff <| TSyntax ``scopeSt
       $[universe $[$levelNames₁:ident]*]?
       $[$namespaceStx₁]?
       $[open $openDecls₁:reifiedOpenDecl*]?
-      $[open scoped $openScopedDecls₁:reifiedOpenScopedDecl*]?
+      $[open scoped $openScopedDecls₁:reifiedSimpleOpenIdent*]?
       $[set_options $keyVals₁:reifiedOptionKeyValue,*]?
       $[$vars₁]?),
     `(scopeStx| $sectionHeader₂ scope
       $[universe $[$levelNames₂:ident]*]?
       $[$namespaceStx₂]?
       $[open $openDecls₂:reifiedOpenDecl*]?
-      $[open scoped $openScopedDecls₂:reifiedOpenScopedDecl*]?
+      $[open scoped $openScopedDecls₂:reifiedSimpleOpenIdent*]?
       $[set_options $keyVals₂:reifiedOptionKeyValue,*]?
       $[$vars₂]?) =>
 
