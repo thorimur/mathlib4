@@ -5,3 +5,5 @@ import Mathlib.Util.WhatsNew
 public import Mathlib.Cafe.Util
 
 open Lean Elab Meta Tactic
+
+#check withIncRecDepth
