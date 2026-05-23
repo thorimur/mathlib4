@@ -37,10 +37,27 @@ Except when constructing instances, you should rarely see this, and use the `⟶
 -/
 class Quiver (V : Type u) where
   /-- The type of edges/arrows/morphisms between a given source and target. -/
-  Hom : V → V → Type v
+  HomType : V → V → Type v
 
-attribute [to_dual self (reorder := 3 4)] Quiver.Hom
-attribute [to_dual self (reorder := Hom (1 2))] Quiver.mk
+@[ext]
+structure Quiver.Hom {V} [Quiver V] (a b : V) where
+  val : Quiver.HomType a b
+
+attribute [to_dual self (reorder := 3 4)] Quiver.HomType
+attribute [to_dual self (reorder := HomType (1 2))] Quiver.mk
+
+attribute [to_dual self (reorder := a b)] Quiver.Hom
+attribute [to_dual self] Quiver.Hom.mk
+attribute [to_dual self] Quiver.Hom.val
+
+def Quiver.Hom.map {V} {a b : V} [Quiver V] (f : Quiver.HomType a b → Quiver.HomType a b)
+    (arr : Quiver.Hom a b) : Quiver.Hom a b where
+  val := f arr.val
+
+def Quiver.Hom.hmap {V} {a₀ b₀ a₁ b₁ : V} [Quiver V]
+    (f : Quiver.HomType a₀ b₀ → Quiver.HomType a₁ b₁)
+    (arr : Quiver.Hom a₀ b₀) : Quiver.Hom a₁ b₁ where
+  val := f arr.val
 
 /--
 Notation for the type of edges/arrows/morphisms between a given source and target
@@ -52,29 +69,33 @@ namespace Quiver
 
 /-- `Vᵒᵖ` reverses the direction of all arrows of `V`. -/
 instance opposite {V} [Quiver V] : Quiver Vᵒᵖ :=
-  ⟨fun a b => (unop b ⟶ unop a)ᵒᵖ⟩
+  ⟨fun a b => HomType (unop b) (unop a)⟩
 
 /-- The opposite of an arrow in `V`. -/
 @[to_dual self]
-def Hom.op {V} [Quiver V] {X Y : V} (f : X ⟶ Y) : op Y ⟶ op X := ⟨f⟩
+nonrec def Hom.op {V} [Quiver V] {X Y : V} (f : X ⟶ Y) : op Y ⟶ op X := ⟨f.val⟩
 
 /-- Given an arrow in `Vᵒᵖ`, we can take the "unopposite" back in `V`. -/
 @[to_dual self]
-def Hom.unop {V} [Quiver V] {X Y : Vᵒᵖ} (f : X ⟶ Y) : unop Y ⟶ unop X := Opposite.unop f
+def Hom.unop {V} [Quiver V] {X Y : Vᵒᵖ} (f : X ⟶ Y) : unop Y ⟶ unop X := ⟨f.val⟩
 
 /-- The bijection `(X ⟶ Y) ≃ (op Y ⟶ op X)`. -/
 @[simps, to_dual self]
 def Hom.opEquiv {V} [Quiver V] {X Y : V} : (X ⟶ Y) ≃ (Opposite.op Y ⟶ Opposite.op X) where
-  toFun := Opposite.op
-  invFun := Opposite.unop
+  toFun := Quiver.Hom.op
+  invFun := Quiver.Hom.unop
 
 /-- A type synonym for a quiver with no arrows. -/
 def Empty (V : Type u) : Type u := V
 
 instance emptyQuiver (V : Type u) : Quiver.{u} (Empty V) := ⟨fun _ _ => PEmpty⟩
 
-@[simp, to_dual self]
-theorem empty_arrow {V : Type u} (a b : Empty V) : (a ⟶ b) = PEmpty := rfl
+@[simps, to_dual self]
+def emptyArrowEquiv {V : Type u} (a b : Empty V) : (a ⟶ b) ≃ PEmpty where
+  toFun := nofun
+  invFun := nofun
+  left_inv := nofun
+  right_inv := nofun
 
 /-- A quiver is thin if it has no parallel arrows. -/
 abbrev IsThin (V : Type u) [Quiver V] : Prop := ∀ a b : V, Subsingleton (a ⟶ b)

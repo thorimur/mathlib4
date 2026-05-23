@@ -122,14 +122,14 @@ containing the data, but none of the axioms. -/
 @[pp_with_univ]
 class CategoryStruct (obj : Type u) : Type max u (v + 1) extends Quiver.{v} obj where
   /-- The identity morphism on an object. -/
-  id : ∀ X : obj, Hom X X
+  id : ∀ X : obj, Quiver.Hom X X
   /-- Composition of morphisms in a category, written `f ≫ g`. -/
   comp : ∀ {X Y Z : obj}, (X ⟶ Y) → (Y ⟶ Z) → (X ⟶ Z)
 
 attribute [trans, to_dual self (reorder := X Z, 6 7)] CategoryStruct.comp
 attribute [to_dual self (reorder := comp (X Z, 4 5))] CategoryStruct.mk
 
-initialize_simps_projections CategoryStruct (-toQuiver_Hom, -Hom)
+initialize_simps_projections CategoryStruct (-toQuiver_HomType, -HomType)
 
 /-- Notation for the identity morphism in a category. -/
 scoped notation "𝟙" => CategoryStruct.id  -- type as \b1
@@ -243,7 +243,7 @@ class Category (obj : Type u) : Type max u (v + 1) extends CategoryStruct.{v} ob
 attribute [to_dual existing (attr := simp, grind =) id_comp] Category.comp_id
 attribute [simp, grind _=_] Category.assoc
 
-initialize_simps_projections Category (-Hom)
+initialize_simps_projections Category (-HomType)
 
 /-- `Category.mk'` is the dual of `Category.mk`, which we need for `to_dual`.
 Please avoid using this directly. -/
@@ -394,14 +394,27 @@ variable [Category.{v} C]
 
 universe u'
 
+abbrev Quiver.Hom.mk'.{u_1} {V : Type u_1} {_ : Quiver V} {a b : V} (val : Quiver.HomType a b) :
+  a ⟶ b := ⟨val⟩
+
+abbrev Quiver.Hom.val'.{u_1} {V : Type u_1} {_ : Quiver V} {a b : V} (val : Quiver.HomType a b) :
+  a ⟶ b := ⟨val⟩
+
+@[instance_reducible]
+def uliftQuiver : Quiver.{v} (ULift.{u'} C) where
+  HomType X Y := Quiver.HomType X.down Y.down
+
+attribute [local instance] uliftQuiver in
 /-- The category structure on `ULift C` that is induced from the category
 structure on `C`. This is not made a global instance because of a diamond
 when `C` is a preordered type. -/
 @[instance_reducible]
 def uliftCategory : Category.{v} (ULift.{u'} C) where
-  Hom X Y := X.down ⟶ Y.down
-  id X := 𝟙 X.down
-  comp f g := f ≫ g
+  id X := ⟨(𝟙 X.down).val⟩
+  comp {X Y Z} f g := ⟨(⟨f.val⟩ ≫ ⟨g.val⟩).val⟩
+  id_comp := sorry
+  assoc := sorry
+  comp_id := sorry
 
 attribute [local instance] uliftCategory in
 -- We verify that this previous instance can lift small categories to large categories.
