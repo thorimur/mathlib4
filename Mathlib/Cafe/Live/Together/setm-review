@@ -1,0 +1,13 @@
+/-
+- docstrings
+- error messages; find every place it can fail
+- Name resolution issues re: `mkIdent`? Does hygiene save us?
+- fvars in the local/goal's context
+- dead code/unused return values?
+- necessary bundling?
+- naming: conventional? informative?
+- visibility: private when special-purpose?
+- any inlines?
+- monad backtracking: with(out)Recover, try/catch in different monads, etc.
+- control flow
+-/

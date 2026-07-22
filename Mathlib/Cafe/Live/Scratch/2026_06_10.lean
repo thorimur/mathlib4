@@ -7,6 +7,7 @@ public import ProofWidgets
 #guard_msgs in
 #check ProofWidgets.MakeEditLink
 
+#check Lean.Lsp.WorkspaceEdit.ofTextEdit
 
 #check Lean.Meta.Tactic.TryThis.SuggestionStyle
 

@@ -45,6 +45,9 @@ Questions
 -/
 
 
+inductive Foo where
+| prod : Array Foo →
+
 
 /-
 - cancellation
