@@ -7,6 +7,8 @@ public meta import Mathlib.Lean.MessageData.ForExprs
 
 open Lean Elab Term Command
 
+set_option linter.unusedVariables false
+
 public meta section
 
 variable {α} {β} [BEq α] [Hashable α]
@@ -179,7 +181,7 @@ deriving instance Repr for Lean.LocalInstance
 deriving instance Repr for Lean.LocalInstances
 deriving instance Repr for Lean.MetavarDecl
 deriving instance Repr for Lean.DelayedMetavarAssignment
-deriving instance Repr for Lean.MetavarContext
+-- deriving instance Repr for Lean.MetavarContext
 deriving instance Repr for Lean.Meta.ExprConfigCacheKey
 deriving instance Repr for Lean.Meta.InferTypeCache
 deriving instance Repr for Lean.Meta.InfoCacheKey
@@ -198,7 +200,7 @@ deriving instance Repr for Lean.Meta.PostponedEntry
 deriving instance Repr for Std.Format.FlattenBehavior
 deriving instance Repr for Std.Format
 deriving instance Repr for Lean.Elab.ElabInfo
-deriving instance Repr for Lean.Elab.TacticInfo
+-- deriving instance Repr for Lean.Elab.TacticInfo
 deriving instance Repr for Lean.Elab.TermInfo
 deriving instance Repr for Lean.Elab.PartialTermInfo
 deriving instance Repr for Lean.Elab.CommandInfo
@@ -233,14 +235,14 @@ deriving instance Repr for Lean.Elab.UserWidgetInfo
 deriving instance Repr for Lean.Elab.CustomInfo
 deriving instance Repr for FVarAliasInfo
 deriving instance Repr for Lean.Elab.FieldRedeclInfo
-deriving instance Repr for Lean.Elab.DelabTermInfo
+-- deriving instance Repr for Lean.Elab.DelabTermInfo
 deriving instance Repr for Lean.Elab.ChoiceInfo
 deriving instance Repr for Lean.Elab.DocInfo
 deriving instance Repr for Lean.Elab.DocElabInfo
-deriving instance Repr for Lean.Elab.Info
+-- deriving instance Repr for Lean.Elab.Info
 
-deriving instance Repr for Lean.PrettyPrinter.InfoPerPos
-deriving instance Repr for Lean.FormatWithInfos
+-- deriving instance Repr for Lean.PrettyPrinter.InfoPerPos
+-- deriving instance Repr for Lean.FormatWithInfos
 -- deriving instance Repr for Lean.VisibilityMap
 deriving instance Repr for Lean.ConstantVal
 deriving instance Repr for Lean.AxiomVal
@@ -262,7 +264,7 @@ deriving instance Repr for Lean.Kernel.Diagnostics
 deriving instance Repr for Lean.ModuleIdx
 
 stub_repr EnvExtensionState
-deriving instance Repr for Lean.CompactedRegion
+-- deriving instance Repr for Lean.CompactedRegion
 deriving instance Repr for Lean.EffectiveImport
 instance : Repr EnvExtensionEntry := ⟨fun _ _ => "<EnvExtensionEntry>"⟩
 deriving instance Repr for Lean.ModuleData
@@ -317,7 +319,7 @@ deriving instance Repr for Lean.NameTrie α
 deriving instance Repr for NonScalar
 -- private instance : Repr Lean.RealizationContext := ⟨fun _ _ => "<RealizationContext>"⟩
 -- deriving instance Repr for Lean.Environment
-deriving instance Repr for Lean.MessageDataContext
+-- deriving instance Repr for Lean.MessageDataContext
 
 deriving instance Repr for Lean.OpenDecl
 deriving instance Repr for Lean.NamingContext
@@ -326,9 +328,9 @@ deriving instance Repr for Lean.TraceData
 stub_repr PPContext
 stub_repr Option PPContext → BaseIO Dynamic
 stub_repr MetavarContext → Bool
-deriving instance Repr for Lean.MessageData
-deriving instance Repr for Lean.Meta.Diagnostics
-deriving instance Repr for Lean.Meta.State
+-- deriving instance Repr for Lean.MessageData
+-- deriving instance Repr for Lean.Meta.Diagnostics
+-- deriving instance Repr for Lean.Meta.State
 
 set_option trace.debug true
 
@@ -341,18 +343,18 @@ deriving instance Repr for Lean.Core.Context
 
   deriving instance Repr for Lean.NameGenerator
   deriving instance Repr for Lean.DeclNameGenerator
-  deriving instance Repr for Lean.TraceElem
-  deriving instance Repr for Lean.TraceState
+  -- deriving instance Repr for Lean.TraceElem
+  -- deriving instance Repr for Lean.TraceState
   deriving instance Repr for Lean.Core.Cache
   deriving instance Repr for Lean.MessageSeverity
   deriving instance Repr for Lean.BaseMessage
-  deriving instance Repr for Lean.Message
+  -- deriving instance Repr for Lean.Message
   deriving instance Repr for Lean.NameSet
-  deriving instance Repr for Lean.MessageLog
-  deriving instance Repr for Lean.Elab.CommandContextInfo
-  deriving instance Repr for Lean.Elab.PartialContextInfo
-  deriving instance Repr for Lean.Elab.InfoTree
-  deriving instance Repr for Lean.Elab.InfoState
+  -- deriving instance Repr for Lean.MessageLog
+  -- deriving instance Repr for Lean.Elab.CommandContextInfo
+  -- deriving instance Repr for Lean.Elab.PartialContextInfo
+  -- deriving instance Repr for Lean.Elab.InfoTree
+  -- deriving instance Repr for Lean.Elab.InfoState
   deriving instance Repr for Lean.Language.SnapshotTask.ReportingRange
   section
   local instance {α} : Repr (Task α) := ⟨fun _ _ => "Task[*]"⟩
@@ -363,13 +365,13 @@ deriving instance Repr for Lean.Core.Context
   instance {α} [TypeName α] : Repr (IO.Ref (Option α)) :=
     ⟨fun _ _ => f!"<IO.Ref (Option {TypeName.typeName α})"⟩
 
-  deriving instance Repr for Lean.Language.Snapshot.Diagnostics
-  deriving instance Repr for Lean.Language.Snapshot
-  deriving instance Repr for Lean.Language.SnapshotTree
-  deriving instance Repr for Lean.Core.State
+  -- deriving instance Repr for Lean.Language.Snapshot.Diagnostics
+  -- deriving instance Repr for Lean.Language.Snapshot
+  -- deriving instance Repr for Lean.Language.SnapshotTree
+  -- deriving instance Repr for Lean.Core.State
 
   deriving instance Repr for Lean.Elab.Command.Scope
-  deriving instance Repr for Lean.Elab.Command.State
+  -- deriving instance Repr for ,Lean.Elab.Command.State
   deriving instance Repr for Lean.Elab.MacroStackElem
   deriving instance Repr for Lean.Elab.MacroStack
   deriving instance Repr for Lean.Language.SyntaxGuarded
@@ -377,8 +379,8 @@ deriving instance Repr for Lean.Core.Context
   local instance {α} : Repr (IO.Promise α) := ⟨fun _ _ => "Promise[*]"⟩
   deriving instance Repr for Lean.Language.SnapshotBundle
   end
-  deriving instance Repr for Lean.Language.DynamicSnapshot
-  deriving instance Repr for Lean.Elab.Command.Context
+  -- deriving instance Repr for Lean.Language.DynamicSnapshot
+  -- deriving instance Repr for Lean.Elab.Command.Context
 
   -- deriving instance Repr for Macro.State
   stub_repr Option (MVarId → Expr → Expr → MetaM MessageData)
@@ -387,11 +389,11 @@ deriving instance Repr for Lean.Core.Context
   stub_repr FixedTermElabRef
   deriving instance Repr for Lean.Elab.Term.SavedContext
   deriving instance Repr for Lean.Elab.Term.TacticMVarKind
-  deriving instance Repr for Lean.Elab.Term.SyntheticMVarKind
-  deriving instance Repr for Lean.Elab.Term.SyntheticMVarDecl
-  deriving instance Repr for Lean.Elab.Term.MVarErrorKind
-  deriving instance Repr for Lean.Elab.Term.MVarErrorInfo
-  deriving instance Repr for Lean.Elab.Term.LevelMVarErrorInfo
+  -- deriving instance Repr for Lean.Elab.Term.SyntheticMVarKind
+  -- deriving instance Repr for Lean.Elab.Term.SyntheticMVarDecl
+  -- deriving instance Repr for Lean.Elab.Term.MVarErrorKind
+  -- deriving instance Repr for Lean.Elab.Term.MVarErrorInfo
+  -- deriving instance Repr for Lean.Elab.Term.LevelMVarErrorInfo
   deriving instance Repr for Lean.AttributeKind
   deriving instance Repr for Lean.Elab.Attribute
   deriving instance Repr for Lean.Elab.TerminationBy
@@ -400,22 +402,22 @@ deriving instance Repr for Lean.Core.Context
   deriving instance Repr for Lean.Elab.DecreasingBy
   deriving instance Repr for Lean.Elab.TerminationHints
   deriving instance Repr for Lean.Elab.Term.LetRecToLift
-  deriving instance Repr for Lean.Elab.Term.State
+  -- deriving instance Repr for Lean.Elab.Term.State
 
 
   deriving instance Repr for Lean.Elab.AutoBoundImplicitContext
   stub_repr Name → Bool
   deriving instance Repr for Tactic.State
-  deriving instance Repr for Core.SavedState
-  deriving instance Repr for Meta.SavedState
-  deriving instance Repr for Term.SavedState
-  deriving instance Repr for Tactic.SavedState
-  deriving instance Repr for Tactic.TacticFinishedSnapshot
-  deriving instance Repr for Tactic.TacticParsedSnapshot
-  deriving instance Repr for Lean.Elab.Term.Context
+  -- deriving instance Repr for Core.SavedState
+  -- deriving instance Repr for Meta.SavedState
+  -- deriving instance Repr for Term.SavedState
+  -- deriving instance Repr for Tactic.SavedState
+  -- deriving instance Repr for Tactic.TacticFinishedSnapshot
+  -- deriving instance Repr for Tactic.TacticParsedSnapshot
+  -- deriving instance Repr for Lean.Elab.Term.Context
 
 
-  deriving instance Repr for SyntheticMVarKind
+  -- deriving instance Repr for SyntheticMVarKind
 
 -- run_cmd do
 --   logInfo m!"{repr <|← get}"
