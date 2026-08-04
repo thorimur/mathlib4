@@ -19,7 +19,39 @@ public meta def bar (n : Nat) : (fun _ b => b) foo Nat := (n + 1)
 -- What are the real costs/benefits to meta defs vs. regular defs + meta imports?
 -- SQ: why are meta defs allowed in the types of non-meta defs and vice versa?
 -- SQ: what did he mean by "get rid of inline restriction"
+-- SQ: why the meta closure design? possible answer: otherwise we'd be forced to pollute meta API.
+-- Q: are IR-loaded modules present as `EffectiveImport`s in the environment, with extraConstNames coming from that IR? Do IR constants make it into `const2ModIdx`?
+-- SQ: what's your mental model for the meta phase? (is there an analogue for (or extension to) "scope" for visibilities?)
+-- need working metaprogrammer mental model
 
+-- (S?)Q: if I have `private def` then `public def` which uses it...then I `meta import`...why can I execute `public def`? Where did the IR for private def go, and how does this mirror the story for forming meta closures of public defs which drag in private defs?
+
+-- Q: a private change to a meta imported module (which affects a private def's IR) forces everything to rebuild, right?
+
+-- Task: set up presentation module chains? comment including hierarchy in each
+
+-- Task: make an inventory of visibility meta API (`with(out)Exporting` (make inventory of everything this affects: elab, adding decls, resolution, finding?; when does the ambient scope affect my meta code), private names and `privateToUserName` `isPrivateName`, `addDecl` (visibility fields), attributes + meta helper commands such as `syntax` and `elab` handle public meta-ness and take the `local` keyword for creating private behavior)
+
+-- public section
+
+
+/-
+  TFAE
+  [1. P ]
+  [2. Q ]
+
+-/
+
+
+-- Should we change the pretty-printer for defs to not assume public?
+#print foooo
+
+#module_chain
+  A import B
+  A public meta import C
+
+
+#check Environment
 -- No matter what path you take to a downstream module, these^[what?] will be bound together: have all or lose all
 
 /-
