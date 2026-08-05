@@ -1,19 +1,24 @@
 module
 
+import Mathlib.Cafe.Module.A
 import Lean
 import Mathlib.Cafe.Repr
-import Lake
-
-def foo (n : Nat) := n + 5
-
-@[expose] public def pubFoo (n : Bool) := n && n
 
 
--- Private bodies allow you to change the implementation and control the interface
--- Your API is the type + lemmas defining interaction with the rest of the library
---
 
--- open Lean
--- run_cmd do
---   let some c := (← getEnv).find? ``pubFoo | throwError "Couldn't find it!"
---   logInfo m!"{repr c}"
+open Lean
+
+set_option backward.proofsInPublic true
+
+#check Environment
+
+run_cmd do
+  let env ← getEnv
+  withExporting do
+
+  logInfo m!"{(← getEnv).isExporting}"
+  let c ← getConstInfo ``foo_eq
+  let a := wasOriginallyTheorem (← getEnv) ``foo_eq
+  logInfo m!"{repr c}"
+
+theorem foo_eq' : foo 5 = 6 := by rfl

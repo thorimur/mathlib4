@@ -17,6 +17,7 @@ require "leanprover-community" / "proofwidgets" @ git "main"
 require "leanprover-community" / "importGraph" @ git "main"
 require "leanprover-community" / "LeanSearchClient" @ git "main"
 require "leanprover-community" / "plausible" @ git "main"
+require "oleandump" from git "https://github.com/thorimur/oleandump.git" @ "paul.c"
 
 
 /-!
