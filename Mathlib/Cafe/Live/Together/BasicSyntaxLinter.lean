@@ -7,8 +7,6 @@ public meta section
 
 open Lean Elab Command Linter
 
-#check `(term| ⟨1, 2⟩)
-
 def basicLinter : Linter where
   run stx := do
     for stx in stx.topDown do
@@ -45,8 +43,6 @@ initialize newConsts : StatefulLinter NameSet (Array (Name × ConstantInfo)) ←
       if names.size == 3 then throwError "AAAAA!"
       logInfo m!"Total names after this command: {names.toList.map MessageData.ofConstName}"
       return names)
-
-#check Position.getDeclsAfter
 
 initialize badNamespace : StatefulLinter Unit Unit ← do
   registerStatefulLinter (init := ())
