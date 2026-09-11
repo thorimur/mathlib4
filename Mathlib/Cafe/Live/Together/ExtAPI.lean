@@ -9,15 +9,11 @@ import all Lean.ExtraModUses
 
 open Lean
 
-    -- logInfo m!"{← IO.FS.readBinFile x}"
-
 set_option autoImplicit false
 
 public meta section
 
--- example : True := by grind =>
-
-
+-- From Nate!
 open Lean Elab Command in
 elab tk:"#docstr " name:ident : command => do
   let env ← getEnv
