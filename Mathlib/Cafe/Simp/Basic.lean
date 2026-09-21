@@ -25,6 +25,8 @@ info: Lean.Meta.simpGoal
 #guard_msgs (whitespace := lax) in
 #check Lean.Meta.simpGoal
 
+#check Simp.Stats
+
 -- Related
 #check dsimpGoal
 #check simpTarget -- just the goal, not its local decls
@@ -271,7 +273,12 @@ info: Lean.Meta.SimpTheorems.addConst
 -- which uses
 #check mkSimpTheoremFromConst
 -- and fills in all the fields appropriately, as well as splitting into multiple theorems if necessary
+#check SimpTheorems
+#check Elab.Tactic.evalSimp
 
+#check preprocess
+
+#check SimpTheorems.rfl
 -- related:
 #check SimpTheorems.addDeclToUnfold
 #check SimpTheorems.addLetDeclToUnfold
