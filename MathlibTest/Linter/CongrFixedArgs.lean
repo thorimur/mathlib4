@@ -30,15 +30,93 @@ theorem myMap_congr'' {f g : Nat → Nat} {l : List Nat} (h : ∀ x ∈ l, f x =
     myMap f l = myMap g l :=
   List.map_congr_left h
 
-/--
-warning: The `@[congr]` theorem `myMap_congr''` does not allow the following explicit arguments of `myMap` to change:
-  `l : List Nat`
-This violates the recommendation in the documentation of `@[congr]`.
+#check Lean.registerBuiltinAttribute
+#check Lean.Syntax.eqWithInfo
 
-Note: This linter can be disabled with `set_option linter.congrFixedArgs false`
--/
-#guard_msgs in
-attribute [congr] myMap_congr''
+
+inductive Description where
+  | thing (α : Type) (inst : DecidableEq α) (x : Description)
+  | base
+
+#check Quotient.lift
+
+inductive Mix : Description × Type → Type 1 where
+  | nat (f :  → Nat) : Mix (.base, Nat)
+  | list (α : Type) {inst : DecidableEq α} (x : α) (r : Mix (desc, β)) :
+    Mix (.thing α inst desc, List β)
+
+inductive Vec (α) : Nat → Type where
+  | cons : α → Vec α n → Vec α (n+1)
+  | nil : Vec α 0
+
+#check Lean.Meta.unifyEq?
+#check Eq.rec
+example {α α' : Type} : True := by
+  cases h
+example (a b : Vec α d) : True := by
+  cases a
+  · cases b
+
+  · cases b
+
+def decHEqMix (a : Mix d) (b : Mix d') (h : d.1 = d'.1) : Decidable (a ≍ b ∧ d.2 = d'.2) := by
+  cases a with
+  | nat =>
+    cases b
+    · exact isTrue ⟨.rfl, rfl⟩
+    · injection h
+  | @list _ β α _ x r =>
+    cases b with
+    | nat => injection h
+    | @list _ β' α' _ x' r' =>
+      injection h with hα hinst hdesc
+      subst hα hinst hdesc
+      by_cases hx : x = x'
+      · have := decHEqMix r r' rfl
+        by_cases hrβ : r ≍ r' ∧ β = β'
+        · subst hx
+          have hr := hrβ.left
+          have hβ := hrβ.right
+          subst hβ
+          subst hr
+          exact isTrue ⟨.rfl, rfl⟩
+        · refine isFalse ?_
+          grind
+      · refine isFalse ?_
+        grind
+
+
+
+set_option trace.debug true
+
+
+
+#check Lean.Elab.Term.BinderView
+#check Lean.mkIdentFromRef
+
+open Lean Elab Syntax
+#check mkIdentFrom <|← Lean.MonadQuotation.addMacroScope `inst
+@[congr]
+theorem myMap_congr'''' [Nonempty Nat] {f g : Nat → Nat} {l : List Nat} (h : ∀ x ∈ l, f x = g x) :
+    myMap f l = myMap g l :=
+  List.map_congr_left h
+
+theorem MyNamespace.myMap_congr''' {f g : Nat → Nat} {l : List Nat} (h : ∀ x ∈ l, f x = g x) :
+    myMap f l = myMap g l :=
+  List.map_congr_left h
+
+-- /--
+-- warning: The `@[congr]` theorem `myMap_congr''` does not allow the following explicit arguments of `myMap` to change:
+--   `l : List Nat`
+-- This violates the recommendation in the documentation of `@[congr]`.
+
+-- Note: This linter can be disabled with `set_option linter.congrFixedArgs false`
+-- -/
+-- #guard_msgs in
+-- attribute [congr] myMap_congr''
+
+attribute [local congr] myMap_congr'' myMap_congr'''' in
+example : True := trivial
 
 def myZipWith (f : Nat → Nat → Nat) (l₁ l₂ : List Nat) : List Nat := List.zipWith f l₁ l₂
 

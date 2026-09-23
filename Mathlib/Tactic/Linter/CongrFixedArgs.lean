@@ -11,6 +11,8 @@ public meta import Lean.Meta.Tactic.Simp.SimpCongrTheorems
 -- Import this linter explicitly to ensure that
 -- this file has a valid copyright header and module docstring.
 public meta import Mathlib.Tactic.Linter.Header  -- shake: keep
+public meta import Mathlib.Lean.Elab.InfoTree
+public meta import Mathlib.Lean.ContextInfo
 
 /-!
 # The `congrFixedArgs` linter
@@ -81,6 +83,7 @@ def congrAttributeTargets (stx : Syntax) : Array Syntax := Id.run do
       ids := ids ++ s[4].getArgs
   return ids
 
+#check SourceInfo
 @[inherit_doc Mathlib.Linter.linter.congrFixedArgs]
 def congrFixedArgsLinter : Linter where run := withSetOptionIn fun stx ↦ do
   unless getLinterValue linter.congrFixedArgs (← getLinterOptions) do
@@ -93,8 +96,26 @@ def congrFixedArgsLinter : Linter where run := withSetOptionIn fun stx ↦ do
   let congrThms := (congrExtension.getState env).lemmas.toList.flatMap (·.2)
   let mut linted : NameSet := {}
   -- `attribute [congr] foo bar`: lint the named theorems.
+  for t in ← getInfoTrees do
+    t.foldInfoM (init := ()) fun ctx i _ => do
+      let congrThms := (congrExtension.getState ctx.env).lemmas.map₂.toList.flatMap (·.2.map fun s => MessageData.ofConstName s.theoremName)
+      match i with
+      | .ofCommandInfo i => pure ()
+        -- logInfo m!"{i.elaborator}: {congrThms}"
+      -- | .ofTermInfo { expr := .const declName _, .. } => pure ()
+        -- logInfo m!"term: {.ofConstName declName} sees {congrThms}"
+      | .ofTermInfo { isBinder := true, expr, stx, lctx, .. } =>
+        ctx.runMetaMWithMessages lctx do
+          trace[debug] "inst: {expr} (syntax := {repr stx})"
+      | _ => pure ()
   for id in congrAttributeTargets stx do
-    let declName ← try liftCoreM <| realizeGlobalConstNoOverload id catch _ => continue
+    let some range := id.getRange? | continue
+    let some (.ofTermInfo { expr := .const declName _, .. }) := (← getInfoTrees).findSome? fun t =>
+        t.findInfo? fun
+          | i@(.ofTermInfo { expr := .const _ _, .. }) =>
+            i.stx.eqWithInfo id
+          | _ => false
+      | continue
     -- This fails for `attribute [local congr] foo in ...`, whose attribute is already gone.
     let some thm := congrThms.find? (·.theoremName == declName) | continue
     unless linted.contains declName do
