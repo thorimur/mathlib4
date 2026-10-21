@@ -146,6 +146,9 @@ Runnable standalone — does not require building Mathlib or `MathlibTest`. -/
 lean_exe «cache-test» where
   root := `Cache.Test
 
+lean_exe «task-demo» where
+  root := `Mathlib.Cafe.Live.Async.Main
+
 /-- `lake exe check-yaml` verifies that all declarations referred to in `docs/*.yaml` files exist. -/
 lean_exe «check-yaml» where
   srcDir := "scripts"
