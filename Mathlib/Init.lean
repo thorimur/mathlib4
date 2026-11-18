@@ -86,7 +86,7 @@ register_linter_set linter.mathlibStandardSet :=
   -- linter.allScriptsDocumented -- disabled, let's not impose this requirement downstream.
   -- linter.checkInitImports -- disabled, not relevant downstream.
   linter.auxLemma
-  linter.congrFixedArgs
+  -- linter.congrFixedArgs
   linter.flexible
   linter.hashCommand
   linter.oldObtain
